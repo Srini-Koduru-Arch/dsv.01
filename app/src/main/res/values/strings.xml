@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">Docu Scanner</string>
+    <string name="home_icon">Home Icon</string>
+    <string name="file_icon">File</string>
+    <string name="camera_icon">Camera</string>
+    <string name="cloud_icon">Cloud</string>
+    <string name="person_icon">Person</string>
+</resources>
