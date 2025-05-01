@@ -1,6 +1,8 @@
 package saaicom.tcb.docuscanner
 
+import android.content.Context
 import android.graphics.Bitmap
+import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -18,12 +20,19 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
+import androidx.navigation.NavHost
+import androidx.navigation.NavHostController
 import org.opencv.android.OpenCVLoader
+import org.opencv.android.Utils
 import org.opencv.core.CvType
 import org.opencv.core.Mat
 import org.opencv.imgproc.Imgproc
 import saaicom.tcb.docuscanner.ui.BottomMenu
 import saaicom.tcb.docuscanner.ui.theme.DocuScannerTheme
+import java.io.File
+import java.io.FileOutputStream
+import androidx.navigation.compose.rememberNavController
 
 class MainActivity : ComponentActivity() {
 
@@ -47,13 +56,13 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun HomeScreen() {
-
+    val navController = rememberNavController()
     Column (
         modifier = Modifier
             .fillMaxWidth()
             .fillMaxHeight()
-            .background(Color.LightGray)
-            .border(2.dp, Color.Blue, shape = RoundedCornerShape(8.dp)) // Border
+            .background(Color.Black)
+            //.border(2.dp, Color.Blue, shape = RoundedCornerShape(8.dp)) // Border
             .padding(WindowInsets.statusBars.asPaddingValues()), // Adds padding below the status bar
         verticalArrangement = Arrangement.Top,
         horizontalAlignment = Alignment.CenterHorizontally
@@ -65,7 +74,7 @@ fun HomeScreen() {
                 .border(2.dp, Color.Blue, shape = RoundedCornerShape(8.dp))
                 .height(67.dp)
         ){
-            Text("This is top advertizement banner", fontSize = 18.sp)
+            Text("This is top advertisement banner", fontSize = 18.sp)
         }
 
         //Search Bar
@@ -79,10 +88,33 @@ fun HomeScreen() {
                 .padding(bottom = 27.dp),
             verticalArrangement = Arrangement.Bottom
         ){
-            BottomMenu()
+            BottomMenu(navController = navController)
         }
 
     }
+}
 
+fun saveBitmapToCache(context : Context, bitmap: Bitmap): Uri {
+    val file = File(context.cacheDir, "captured_image.jpg")
+    val fos = FileOutputStream(file)
+    bitmap.compress(Bitmap.CompressFormat.JPEG, 100, fos)
+    fos.close()
+    return FileProvider.getUriForFile(context, "${context.packageName}.provider", file)
+}
 
+fun processImageWithOpenCV(bitmap : Bitmap): Bitmap{
+
+    // Convert Bitmap to Mat
+    val mat = Mat()
+    val tempBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true)
+    Utils.bitmapToMat(tempBitmap, mat)
+
+    // Convert to Grayscale
+    Imgproc.cvtColor(mat, mat, Imgproc.COLOR_RGBA2GRAY)
+
+    // Convert Mat back to Bitmap
+    val processedBitmap = Bitmap.createBitmap(mat.cols(), mat.rows(), Bitmap.Config.ARGB_8888)
+    Utils.matToBitmap(mat, processedBitmap)
+
+    return processedBitmap
 }

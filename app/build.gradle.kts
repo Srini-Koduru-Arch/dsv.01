@@ -49,12 +49,15 @@ android {
 
 dependencies {
 
+    implementation(libs.coil.kt.coil.compose)
     implementation(libs.androidx.material.icons.extended)
     implementation(platform(libs.androidx.compose.bom.v20240101))
     implementation(libs.ui)
     implementation(libs.material3)
     implementation(libs.ui.tooling.preview)
     implementation(project(":opencv"))
+    implementation(libs.androidx.navigation.runtime.ktx)
+    implementation(libs.androidx.navigation.compose)
     debugImplementation(libs.ui.tooling)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
