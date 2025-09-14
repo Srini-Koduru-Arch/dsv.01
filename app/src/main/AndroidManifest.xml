@@ -2,9 +2,24 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <uses-feature android:name="android.permission.CAMERA" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        tools:ignore="ScopedStorage" />
+    <!-- Declares that the app uses the camera hardware. Not a permission. -->
+    <uses-feature android:name="android.hardware.camera" android:required="true"/>
+    <!-- Permissions for Camera access -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+
+    <!-- uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" / -->
+
+    <!-- Permissions for Reading Storage (READ_EXTERNAL_STORAGE for API 32 and below) -->
+    <!-- This is for reading general files on older Android versions. -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>
+
+    <!-- Permissions for Reading Media (Android 13 / API 33 and above) -->
+    <!-- These are granular permissions for accessing media files. -->
+    <!-- READ_MEDIA_IMAGES is crucial for listing scanned documents (which are often images/PDFs). -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <!-- Add READ_MEDIA_VIDEO and READ_MEDIA_AUDIO if your app will also list/access those types of files -->
+    <!-- <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" /> -->
+    <!-- <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" /> -->
 
     <application
         android:allowBackup="true"
@@ -15,7 +30,10 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.DocuScanner"
-        tools:targetApi="31">
+        tools:targetApi="35">
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="ca-app-pub-3940256099942544~3347511713"/>
         <activity
             android:name=".MainActivity"
             android:exported="true"

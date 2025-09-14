@@ -15,6 +15,14 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        vectorDrawables {
+            useSupportLibrary = true
+        }
+        externalNativeBuild {
+            cmake {
+                cppFlags += ""
+            }
+        }
     }
 
     buildTypes {
@@ -41,6 +49,12 @@ android {
     buildFeatures {
         compose = true
     }
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
 
     composeOptions {
         kotlinCompilerExtensionVersion = "1.4.8"  // Compatible with Kotlin 1.8.22
@@ -49,15 +63,27 @@ android {
 
 dependencies {
 
+    // CameraX dependencies
+    implementation(libs.androidx.camera.core)
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.androidx.camera.video)
+    implementation(libs.androidx.camera.view)
+    implementation(libs.androidx.camera.extensions)
+
+    // Lifecycle ViewModel and runtime
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.lifecycle.runtime.ktx.v292)
+
     implementation(libs.coil.kt.coil.compose)
     implementation(libs.androidx.material.icons.extended)
-    implementation(platform(libs.androidx.compose.bom.v20240101))
     implementation(libs.ui)
     implementation(libs.material3)
     implementation(libs.ui.tooling.preview)
     implementation(project(":opencv"))
     implementation(libs.androidx.navigation.runtime.ktx)
     implementation(libs.androidx.navigation.compose)
+    implementation(libs.play.services.ads.api)
     debugImplementation(libs.ui.tooling)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

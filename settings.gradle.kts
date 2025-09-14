@@ -19,6 +19,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Docu Scanner"
+rootProject.name = "DocuScanner"
 include(":app")
 include(":opencv")
