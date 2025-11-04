@@ -1,18 +1,17 @@
 package saaicom.tcb.docuscanner
 
 import android.Manifest
-import android.content.Context
+import android.app.Activity
+import android.content.Context // *** ADDED: Import ***
 import android.content.pm.PackageManager
-import android.os.Bundle
+import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.util.Log
-import android.view.View
-import android.view.ViewGroup
-import android.view.WindowManager
-import android.widget.LinearLayout
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -22,11 +21,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.navigation.NavController
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -37,6 +36,9 @@ import com.google.android.gms.ads.AdRequest
 import com.google.android.gms.ads.AdSize
 import com.google.android.gms.ads.AdView
 import com.google.android.gms.ads.MobileAds
+import com.google.android.gms.auth.api.signin.GoogleSignIn // *** ADDED: Import ***
+import kotlinx.coroutines.launch // *** ADDED: Import ***
+import org.opencv.android.OpenCVLoader
 import saaicom.tcb.docuscanner.screens.camera.CameraScreen
 import saaicom.tcb.docuscanner.screens.cloud.CloudFilesScreen
 import saaicom.tcb.docuscanner.screens.edit.ScannedDocumentEditScreen
@@ -44,8 +46,6 @@ import saaicom.tcb.docuscanner.screens.files.FilesScreen
 import saaicom.tcb.docuscanner.screens.home.HomeScreen
 import saaicom.tcb.docuscanner.screens.profile.ProfileScreen
 import saaicom.tcb.docuscanner.ui.theme.DocuScannerTheme
-import android.net.Uri
-import org.opencv.android.OpenCVLoader
 
 
 // Define your routes as constants for better type safety and readability
@@ -197,10 +197,30 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun DocuScannerApp(requestCameraPermission: () -> Unit, hasStoragePermission: Boolean) {
     val navController = rememberNavController()
+    val context = LocalContext.current // *** ADDED: Get context ***
+    val scope = rememberCoroutineScope() // *** ADDED: Get scope ***
+
+    // *** ADDED: LaunchedEffect to check for last signed-in user on app start ***
+    LaunchedEffect(Unit) {
+        val lastSignedInAccount = GoogleSignIn.getLastSignedInAccount(context)
+        if (lastSignedInAccount != null) {
+            Log.d("MainActivity", "Found last signed-in account: ${lastSignedInAccount.email}. Initializing DriveRepository.")
+            scope.launch { // Launch in coroutine scope
+                DriveRepository.initialize(context, lastSignedInAccount)
+            }
+        } else {
+            Log.d("MainActivity", "No previously signed-in account found.")
+        }
+    }
+
 
     Scaffold(
         topBar = {
-            AdBanner(adUnitId = "ca-app-pub-3940256099942544/6300978111")
+            Box(
+                modifier = Modifier.fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ){AdBanner(adUnitId = "ca-app-pub-3940256099942544/6300978111")}
+
         },
         bottomBar = { DocuScannerBottomNavigationBar(navController) }
     ) { innerPadding ->
@@ -211,10 +231,47 @@ fun DocuScannerApp(requestCameraPermission: () -> Unit, hasStoragePermission: Bo
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            composable(Routes.HOME) { HomeScreen(hasStoragePermission = hasStoragePermission) }
+            composable(Routes.HOME) {
+                var showExitDialog by remember { mutableStateOf(false) }
+                val activity = (LocalContext.current as? Activity)
+
+                if (showExitDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showExitDialog = false },
+                        title = { Text("Exit App") },
+                        text = { Text("Are you sure you want to quit?") },
+                        confirmButton = {
+                            TextButton(
+                                onClick = {
+                                    showExitDialog = false
+                                    activity?.finish()
+                                }
+                            ) {
+                                Text("Yes")
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(
+                                onClick = { showExitDialog = false }
+                            ) {
+                                Text("No")
+                            }
+                        }
+                    )
+                }
+
+                // This BackHandler will be active only when on the home screen.
+                // It intercepts the back press that would normally exit the app.
+                BackHandler(enabled = true) {
+                    showExitDialog = true
+                }
+
+                HomeScreen(navController = navController, hasStoragePermission = hasStoragePermission)
+            }
             composable(Routes.FILES) { FilesScreen() }
             composable(Routes.CAMERA) { CameraScreen(navController, requestCameraPermission) }
-            composable(Routes.CLOUD_FILES) { CloudFilesScreen() }
+            // *** Pass NavController to CloudFilesScreen ***
+            composable(Routes.CLOUD_FILES) { CloudFilesScreen(navController) }
             composable(Routes.PROFILE) { ProfileScreen() }
             composable(
                 route = Routes.EDIT_DOCUMENT,
@@ -263,6 +320,22 @@ fun DocuScannerBottomNavigationBar(navController: NavController) {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
+    val navigateToScreen: (String) -> Unit = { route ->
+        navController.navigate(route) {
+            // Pop up to the start destination of the graph to
+            // avoid building up a large stack of destinations
+            // on the back stack as users select items
+            popUpTo(navController.graph.findStartDestination().id) {
+                saveState = true
+            }
+            // Avoid multiple copies of the same destination when
+            // re-selecting the same item
+            launchSingleTop = true
+            // Restore state when re-selecting a previously selected item
+            restoreState = true
+        }
+    }
+
     NavigationBar(
         containerColor = Color.DarkGray,
         contentColor = Color.White
@@ -271,7 +344,7 @@ fun DocuScannerBottomNavigationBar(navController: NavController) {
             icon = { Icon(Icons.Filled.Home, contentDescription = "Home") },
             label = { Text("Home") },
             selected = currentRoute == Routes.HOME,
-            onClick = { navController.navigate(Routes.HOME) },
+            onClick = { navigateToScreen(Routes.HOME) },
             colors = NavigationBarItemDefaults.colors(
                 selectedIconColor = Color.White,
                 selectedTextColor = Color.White,
@@ -284,7 +357,7 @@ fun DocuScannerBottomNavigationBar(navController: NavController) {
             icon = { Icon(Icons.Filled.List, contentDescription = "Files") },
             label = { Text("Files") },
             selected = currentRoute == Routes.FILES,
-            onClick = { navController.navigate(Routes.FILES) },
+            onClick = { navigateToScreen(Routes.FILES) },
             colors = NavigationBarItemDefaults.colors(
                 selectedIconColor = Color.White,
                 selectedTextColor = Color.White,
@@ -297,7 +370,7 @@ fun DocuScannerBottomNavigationBar(navController: NavController) {
             icon = { Icon(Icons.Filled.Camera, contentDescription = "Camera") },
             label = { Text("Camera") },
             selected = currentRoute == Routes.CAMERA,
-            onClick = { navController.navigate(Routes.CAMERA) },
+            onClick = { navigateToScreen(Routes.CAMERA) },
             colors = NavigationBarItemDefaults.colors(
                 selectedIconColor = Color.White,
                 selectedTextColor = Color.White,
@@ -310,7 +383,7 @@ fun DocuScannerBottomNavigationBar(navController: NavController) {
             icon = { Icon(Icons.Filled.Cloud, contentDescription = "Cloud") },
             label = { Text("Cloud") },
             selected = currentRoute == Routes.CLOUD_FILES,
-            onClick = { navController.navigate(Routes.CLOUD_FILES) },
+            onClick = { navigateToScreen(Routes.CLOUD_FILES) },
             colors = NavigationBarItemDefaults.colors(
                 selectedIconColor = Color.White,
                 selectedTextColor = Color.White,
@@ -323,7 +396,7 @@ fun DocuScannerBottomNavigationBar(navController: NavController) {
             icon = { Icon(Icons.Filled.Person, contentDescription = "Profile") },
             label = { Text("Profile") },
             selected = currentRoute == Routes.PROFILE,
-            onClick = { navController.navigate(Routes.PROFILE) },
+            onClick = { navigateToScreen(Routes.PROFILE) },
             colors = NavigationBarItemDefaults.colors(
                 selectedIconColor = Color.White,
                 selectedTextColor = Color.White,

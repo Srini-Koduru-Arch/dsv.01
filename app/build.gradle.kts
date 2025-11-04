@@ -18,9 +18,10 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
-        externalNativeBuild {
-            cmake {
-                cppFlags += ""
+
+        packaging {
+            resources {
+                excludes.add("META-INF/DEPENDENCIES")
             }
         }
     }
@@ -49,12 +50,6 @@ android {
     buildFeatures {
         compose = true
     }
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
-        }
-    }
 
     composeOptions {
         kotlinCompilerExtensionVersion = "1.4.8"  // Compatible with Kotlin 1.8.22
@@ -74,7 +69,8 @@ dependencies {
     // Lifecycle ViewModel and runtime
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.runtime.ktx.v292)
-
+    // Add these lines for Jetpack DataStore
+    implementation(libs.androidx.datastore.preferences)
     implementation(libs.coil.kt.coil.compose)
     implementation(libs.androidx.material.icons.extended)
     implementation(libs.ui)
@@ -100,4 +96,18 @@ dependencies {
     androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
+
+    // For Google Sign-In
+    implementation(libs.play.services.auth)
+
+// For Google Drive API
+    implementation(libs.google.api.client.android)
+    implementation("com.google.apis:google-api-services-drive:v3-rev20220815-2.0.0") {
+        exclude("org.apache.httpcomponents")
+    }
+    // For the Google API Client, which builds the Drive service
+    implementation(libs.google.api.client) // <-- ADD THIS LINE
+    implementation(libs.google.api.client.android)
+    implementation(libs.google.api.client.gson)
+    implementation(libs.google.http.client.android)
 }
