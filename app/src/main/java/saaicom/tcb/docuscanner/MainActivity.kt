@@ -2,7 +2,6 @@ package saaicom.tcb.docuscanner
 
 import android.Manifest
 import android.app.Activity
-import android.content.Context // *** ADDED: Import ***
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -36,26 +35,32 @@ import com.google.android.gms.ads.AdRequest
 import com.google.android.gms.ads.AdSize
 import com.google.android.gms.ads.AdView
 import com.google.android.gms.ads.MobileAds
-import com.google.android.gms.auth.api.signin.GoogleSignIn // *** ADDED: Import ***
-import kotlinx.coroutines.launch // *** ADDED: Import ***
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import kotlinx.coroutines.launch
 import org.opencv.android.OpenCVLoader
 import saaicom.tcb.docuscanner.screens.camera.CameraScreen
-import saaicom.tcb.docuscanner.screens.cloud.CloudFilesScreen
 import saaicom.tcb.docuscanner.screens.edit.ScannedDocumentEditScreen
 import saaicom.tcb.docuscanner.screens.files.FilesScreen
 import saaicom.tcb.docuscanner.screens.home.HomeScreen
 import saaicom.tcb.docuscanner.screens.profile.ProfileScreen
+import saaicom.tcb.docuscanner.screens.sign.PdfSignScreen
+import saaicom.tcb.docuscanner.screens.sign.SignScreen
+import saaicom.tcb.docuscanner.screens.viewer.PdfViewScreen
 import saaicom.tcb.docuscanner.ui.theme.DocuScannerTheme
+import android.content.pm.ActivityInfo
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.dp
 
-
-// Define your routes as constants for better type safety and readability
+// Define your routes as constants
 object Routes {
     const val HOME = "home"
     const val FILES = "files"
     const val CAMERA = "camera"
-    const val CLOUD_FILES = "cloud_files"
+    const val SIGN = "sign" // Replaced CLOUD_FILES
     const val PROFILE = "profile"
     const val EDIT_DOCUMENT = "edit_document/{imageUri}"
+    const val PDF_SIGN = "pdf_sign/{pdfUri}" // For signing a PDF
+    const val PDF_VIEW = "pdf_view/{pdfUri}" // For viewing a PDF
 }
 
 class MainActivity : ComponentActivity() {
@@ -85,23 +90,21 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // Launcher for multiple permissions (e.g., Storage permissions for newer Android versions)
+    // Launcher for multiple permissions
     private val requestStoragePermissionsLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         val readImagesGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            // Conditionally check for READ_MEDIA_IMAGES on API 33+
             permissions[Manifest.permission.READ_MEDIA_IMAGES] ?: false
         } else {
             false
         }
         val readExternalGranted = permissions[Manifest.permission.READ_EXTERNAL_STORAGE] ?: false
 
-        // Check if any relevant read permission is granted
         _hasStoragePermission.value = readImagesGranted || readExternalGranted
 
         if (_hasStoragePermission.value) {
-            Log.d("MainActivity", "Storage permissions granted (READ_MEDIA_IMAGES or READ_EXTERNAL_STORAGE). ✅")
+            Log.d("MainActivity", "Storage permissions granted. ✅")
         } else {
             Log.w("MainActivity", "Storage permissions denied. ❌")
         }
@@ -111,24 +114,17 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Hide the system bars for a full-screen, immersive experience
         WindowCompat.setDecorFitsSystemWindows(window, false)
-
-        // Initialize the Mobile Ads SDK
         MobileAds.initialize(this) {}
-
-        // Request storage permissions on startup
         requestStoragePermissions()
 
         setContent {
             DocuScannerTheme {
-                // A surface container using the 'background' color from the theme
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
                     DocuScannerApp(
-                        // Pass the permission request function down to CameraScreen
                         requestCameraPermission = {
                             checkAndRequestCameraPermission()
                         },
@@ -141,43 +137,30 @@ class MainActivity : ComponentActivity() {
 
 
     // --- Permission Handling Functions ---
-
-    /**
-     * Checks and requests camera permission.
-     * This function is passed to the CameraScreen to trigger permission request.
-     */
     private fun checkAndRequestCameraPermission() {
         when {
             ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED -> {
                 Log.d("MainActivity", "Camera permission already granted. ✅")
             }
             shouldShowRequestPermissionRationale(Manifest.permission.CAMERA) -> {
-                // Explain why you need the permission (e.g., show a dialog)
                 Log.i("MainActivity", "Showing rationale for camera permission. ℹ️")
                 requestCameraPermissionLauncher.launch(Manifest.permission.CAMERA)
             }
             else -> {
-                // Directly request the permission
                 Log.i("MainActivity", "Requesting camera permission directly. 🚦")
                 requestCameraPermissionLauncher.launch(Manifest.permission.CAMERA)
             }
         }
     }
 
-    /**
-     * Checks and requests relevant storage permissions based on Android version.
-     * This is called once during onCreate of the MainActivity.
-     */
     private fun requestStoragePermissions() {
         val permissionsToRequest = mutableListOf<String>()
 
-        // For Android 13 (API 33) and above, request granular media permissions
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES) != PackageManager.PERMISSION_GRANTED) {
                 permissionsToRequest.add(Manifest.permission.READ_MEDIA_IMAGES)
             }
         } else {
-            // For Android 12 (API 32) and below, request READ_EXTERNAL_STORAGE
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
                 permissionsToRequest.add(Manifest.permission.READ_EXTERNAL_STORAGE)
             }
@@ -197,15 +180,32 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun DocuScannerApp(requestCameraPermission: () -> Unit, hasStoragePermission: Boolean) {
     val navController = rememberNavController()
-    val context = LocalContext.current // *** ADDED: Get context ***
-    val scope = rememberCoroutineScope() // *** ADDED: Get scope ***
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var isDrawingSignature by remember { mutableStateOf(false) }
 
-    // *** ADDED: LaunchedEffect to check for last signed-in user on app start ***
+    // <<< NEW: Get current route and activity >>>
+    val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = navBackStackEntry?.destination?.route
+    val activity = LocalContext.current as? Activity
+
+
+    // <<< NEW: Global orientation manager >>>
+    LaunchedEffect(currentRoute, activity) {
+        // Force portrait for all screens *except* SignScreen.
+        // SignScreen will manage its own orientation (portrait list -> landscape canvas).
+        if (currentRoute != Routes.SIGN) {
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        }
+    }
+    // <<< END NEW >>>
+
+    // Persistent sign-in check (can remain, won't hurt)
     LaunchedEffect(Unit) {
         val lastSignedInAccount = GoogleSignIn.getLastSignedInAccount(context)
         if (lastSignedInAccount != null) {
             Log.d("MainActivity", "Found last signed-in account: ${lastSignedInAccount.email}. Initializing DriveRepository.")
-            scope.launch { // Launch in coroutine scope
+            scope.launch {
                 DriveRepository.initialize(context, lastSignedInAccount)
             }
         } else {
@@ -216,20 +216,35 @@ fun DocuScannerApp(requestCameraPermission: () -> Unit, hasStoragePermission: Bo
 
     Scaffold(
         topBar = {
-            Box(
-                modifier = Modifier.fillMaxWidth(),
-                contentAlignment = Alignment.Center
-            ){AdBanner(adUnitId = "ca-app-pub-3940256099942544/6300978111")}
-
+            if(!isDrawingSignature) {
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) { AdBanner(adUnitId = "ca-app-pub-3940256099942544/6300978111") }
+            }
         },
-        bottomBar = { DocuScannerBottomNavigationBar(navController) }
+        bottomBar = {
+            if(!isDrawingSignature){
+                DocuScannerBottomNavigationBar(navController)
+            }
+        }
     ) { innerPadding ->
+        val navHostPadding = if(isDrawingSignature) {
+            PaddingValues(0.dp) // No padding at all when drawing
+        } else {
+            PaddingValues(
+                top = innerPadding.calculateTopPadding(),
+                bottom = if (isDrawingSignature) 0.dp else innerPadding.calculateBottomPadding(),
+                start = innerPadding.calculateLeftPadding(LocalLayoutDirection.current),
+                end = innerPadding.calculateRightPadding(LocalLayoutDirection.current)
+            )
+        }
         NavHost(
             navController = navController,
             startDestination = Routes.HOME,
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
+                .padding(navHostPadding)
         ) {
             composable(Routes.HOME) {
                 var showExitDialog by remember { mutableStateOf(false) }
@@ -260,19 +275,23 @@ fun DocuScannerApp(requestCameraPermission: () -> Unit, hasStoragePermission: Bo
                     )
                 }
 
-                // This BackHandler will be active only when on the home screen.
-                // It intercepts the back press that would normally exit the app.
                 BackHandler(enabled = true) {
                     showExitDialog = true
                 }
 
                 HomeScreen(navController = navController, hasStoragePermission = hasStoragePermission)
             }
-            composable(Routes.FILES) { FilesScreen() }
+
+            composable(Routes.FILES) { FilesScreen(navController) }
             composable(Routes.CAMERA) { CameraScreen(navController, requestCameraPermission) }
-            // *** Pass NavController to CloudFilesScreen ***
-            composable(Routes.CLOUD_FILES) { CloudFilesScreen(navController) }
+
+            composable(Routes.SIGN) { SignScreen(
+                navController = navController,
+                onDrawingChange = { isDrawingSignature = it }
+            ) }
+
             composable(Routes.PROFILE) { ProfileScreen() }
+
             composable(
                 route = Routes.EDIT_DOCUMENT,
                 arguments = listOf(
@@ -286,6 +305,32 @@ fun DocuScannerApp(requestCameraPermission: () -> Unit, hasStoragePermission: Bo
                         navController = navController,
                         imageUri = it,
                     )
+                }
+            }
+
+            composable(
+                route = Routes.PDF_SIGN,
+                arguments = listOf(
+                    navArgument("pdfUri") { type = NavType.StringType }
+                )
+            ) { backStackEntry ->
+                val pdfUriString = backStackEntry.arguments?.getString("pdfUri")
+                pdfUriString?.let {
+                    val decodedUri = Uri.parse(it)
+                    PdfSignScreen(navController = navController, pdfUri = decodedUri)
+                }
+            }
+
+            composable(
+                route = Routes.PDF_VIEW,
+                arguments = listOf(
+                    navArgument("pdfUri") { type = NavType.StringType }
+                )
+            ) { backStackEntry ->
+                val pdfUriString = backStackEntry.arguments?.getString("pdfUri")
+                pdfUriString?.let {
+                    val decodedUri = Uri.parse(it)
+                    PdfViewScreen(navController = navController, pdfUri = decodedUri)
                 }
             }
         }
@@ -320,18 +365,12 @@ fun DocuScannerBottomNavigationBar(navController: NavController) {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
-    val navigateToScreen: (String) -> Unit = { route ->
-        navController.navigate(route) {
-            // Pop up to the start destination of the graph to
-            // avoid building up a large stack of destinations
-            // on the back stack as users select items
+    val navigateToScreen = { destinationRoute: String ->
+        navController.navigate(destinationRoute) {
             popUpTo(navController.graph.findStartDestination().id) {
                 saveState = true
             }
-            // Avoid multiple copies of the same destination when
-            // re-selecting the same item
             launchSingleTop = true
-            // Restore state when re-selecting a previously selected item
             restoreState = true
         }
     }
@@ -379,11 +418,12 @@ fun DocuScannerBottomNavigationBar(navController: NavController) {
                 indicatorColor = Color.White.copy(alpha = 0.3f)
             )
         )
+
         NavigationBarItem(
-            icon = { Icon(Icons.Filled.Cloud, contentDescription = "Cloud") },
-            label = { Text("Cloud") },
-            selected = currentRoute == Routes.CLOUD_FILES,
-            onClick = { navigateToScreen(Routes.CLOUD_FILES) },
+            icon = { Icon(Icons.Filled.Draw, contentDescription = "Sign") },
+            label = { Text("Sign") },
+            selected = currentRoute == Routes.SIGN,
+            onClick = { navigateToScreen(Routes.SIGN) },
             colors = NavigationBarItemDefaults.colors(
                 selectedIconColor = Color.White,
                 selectedTextColor = Color.White,
@@ -392,6 +432,7 @@ fun DocuScannerBottomNavigationBar(navController: NavController) {
                 indicatorColor = Color.White.copy(alpha = 0.3f)
             )
         )
+
         NavigationBarItem(
             icon = { Icon(Icons.Filled.Person, contentDescription = "Profile") },
             label = { Text("Profile") },

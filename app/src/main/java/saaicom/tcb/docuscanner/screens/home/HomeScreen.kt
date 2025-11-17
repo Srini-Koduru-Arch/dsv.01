@@ -1,62 +1,48 @@
 package saaicom.tcb.docuscanner.screens.home
 
-import android.content.ActivityNotFoundException
-import android.content.ContentUris
-import android.content.Context
-import android.content.Intent
 import android.net.Uri
-import android.os.Build
-import android.os.Bundle
-import android.os.CancellationSignal
-import android.os.ParcelFileDescriptor
-import android.print.PageRange
-import android.print.PrintAttributes
-import android.print.PrintDocumentAdapter
-import android.print.PrintDocumentInfo
-import android.print.PrintManager
-import android.provider.MediaStore
-import android.util.Log
-// import android.webkit.WebView // *** REMOVED: No longer needed ***
 import android.widget.Toast
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Email
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.PictureAsPdf
-import androidx.compose.material.icons.filled.Print
-import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow // *** ADDED: Import ***
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.core.content.FileProvider
+import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
-import com.google.android.gms.auth.api.signin.GoogleSignIn
-import com.google.android.gms.auth.api.signin.GoogleSignInAccount
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import saaicom.tcb.docuscanner.DriveRepository // Import DriveRepository
-import saaicom.tcb.docuscanner.FileActions // *** ADDED: Import FileActions ***
+import saaicom.tcb.docuscanner.FileActions
 import saaicom.tcb.docuscanner.Routes
+import saaicom.tcb.docuscanner.SignatureRepository
 import saaicom.tcb.docuscanner.UserData
 import saaicom.tcb.docuscanner.UserDataStore
-import saaicom.tcb.docuscanner.screens.files.FileItem // Import FileItem
-import saaicom.tcb.docuscanner.screens.files.FileItemRow // Import FileItemRow
-import com.google.api.services.drive.model.File as DriveFile // Alias Drive File
-import java.io.File
-import java.io.FileInputStream
-import java.io.FileOutputStream
-import java.io.IOException
-import java.io.InputStream
-import java.io.OutputStream
+import saaicom.tcb.docuscanner.models.FileItem // *** UPDATED IMPORT ***
+import saaicom.tcb.docuscanner.ui.components.DeleteConfirmationDialog
+import saaicom.tcb.docuscanner.ui.components.LocalFileRow // *** UPDATED IMPORT ***
+import saaicom.tcb.docuscanner.ui.components.RenameFileDialog
+import saaicom.tcb.docuscanner.ui.components.SelectFileDialog
+import saaicom.tcb.docuscanner.utils.loadLocalFiles // *** UPDATED IMPORT ***
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 
 @Composable
 fun HomeScreen(
@@ -71,46 +57,112 @@ fun HomeScreen(
     )
 
     var localFiles by remember { mutableStateOf<List<FileItem>>(emptyList()) }
-    var cloudFiles by remember { mutableStateOf<List<DriveFile>>(emptyList()) }
-    val driveService by DriveRepository.driveService.collectAsState()
-    val isDriveConnected = driveService != null
-    var isCloudLoading by remember { mutableStateOf(false) } // *** ADDED: Cloud loading state ***
+    var searchQuery by remember { mutableStateOf("") }
 
-    // Load local files only when permissions are granted
-    LaunchedEffect(hasStoragePermission) {
-        Log.d("HomeScreen", "Local file effect triggered. HasStorage: $hasStoragePermission")
-        if (hasStoragePermission) {
-            localFiles = loadLocalFiles(context)
+    var showAddSigDialog by remember { mutableStateOf(false) }
+    var showSelectFileDialog by remember { mutableStateOf(false) }
+
+    var showDeleteDialog by remember { mutableStateOf(false) }
+    var filesToDelete by remember { mutableStateOf<List<FileItem>>(emptyList()) }
+
+    var fileToRename by remember { mutableStateOf<FileItem?>(null) }
+
+    // Function to reload files
+    val reloadFiles = {
+        scope.launch {
+            if (hasStoragePermission) {
+                localFiles = loadLocalFiles(context)
+            }
         }
     }
 
-    // Load cloud files ONLY when connection state changes
-    LaunchedEffect(isDriveConnected) {
-        Log.d("HomeScreen", "Drive service effect triggered. Connected: $isDriveConnected")
-        if (isDriveConnected) {
-            // *** ADDED: Set loading state ***
-            isCloudLoading = true
-            driveService?.let { service ->
-                Log.d("HomeScreen", "Drive service available, loading cloud files.")
-                val folderId = DriveRepository.findOrCreateDocuScannerFolder(service)
-                if (folderId != null) {
-                    Log.d("HomeScreen", "Found/Created DocuScanner folder: $folderId. Loading files...")
-                    cloudFiles = DriveRepository.loadDriveFiles(service, folderId)
-                    Log.d("HomeScreen", "Loaded ${cloudFiles.size} cloud files.")
-                } else {
-                    Log.e("HomeScreen", "Failed to find or create DocuScanner folder.")
-                    cloudFiles = emptyList()
+    LaunchedEffect(hasStoragePermission) {
+        reloadFiles()
+    }
+
+    val filteredFiles = remember(searchQuery, localFiles) {
+        if (searchQuery.isBlank()) {
+            emptyList()
+        } else {
+            localFiles.filter {
+                it.name?.contains(searchQuery, ignoreCase = true) == true
+            }
+        }
+    }
+
+    // --- DIALOGS ---
+
+    if (showAddSigDialog) {
+        AlertDialog(
+            onDismissRequest = { showAddSigDialog = false },
+            title = { Text("No Signature Found") },
+            text = { Text("You must add a signature first before you can sign a document.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showAddSigDialog = false
+                    navController.navigate(Routes.SIGN)
+                }) {
+                    Text("Add Signature")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAddSigDialog = false }) {
+                    Text("Close")
                 }
             }
-            // *** ADDED: Clear loading state ***
-            isCloudLoading = false
-        } else {
-            Log.d("HomeScreen", "Drive service is null, clearing cloud files.")
-            cloudFiles = emptyList()
-            isCloudLoading = false // Ensure loading is false if not connected
-        }
+        )
     }
 
+    if (showSelectFileDialog) {
+        SelectFileDialog(
+            localFiles = localFiles,
+            onDismiss = { showSelectFileDialog = false },
+            onFileSelected = { fileUri ->
+                showSelectFileDialog = false
+                val encodedUri = URLEncoder.encode(fileUri.toString(), StandardCharsets.UTF_8.toString())
+                navController.navigate("${Routes.PDF_SIGN.split('/')[0]}/$encodedUri")
+            }
+        )
+    }
+
+    if (showDeleteDialog) {
+        DeleteConfirmationDialog(
+            count = filesToDelete.size,
+            onDismiss = { showDeleteDialog = false },
+            onConfirm = {
+                scope.launch {
+                    val success = FileActions.deleteLocalFiles(context, filesToDelete)
+                    if (success) {
+                        Toast.makeText(context, "File(s) deleted", Toast.LENGTH_SHORT).show()
+                        reloadFiles()
+                    } else {
+                        Toast.makeText(context, "Error deleting file(s)", Toast.LENGTH_SHORT).show()
+                    }
+                    showDeleteDialog = false
+                    filesToDelete = emptyList()
+                }
+            }
+        )
+    }
+
+    fileToRename?.let { file ->
+        RenameFileDialog(
+            currentName = file.name ?: "file.pdf",
+            onDismiss = { fileToRename = null },
+            onRename = { newName ->
+                scope.launch {
+                    val success = FileActions.renameLocalFile(context, file.uri, newName)
+                    if (success) {
+                        Toast.makeText(context, "File renamed", Toast.LENGTH_SHORT).show()
+                        reloadFiles()
+                    } else {
+                        Toast.makeText(context, "Error renaming file", Toast.LENGTH_SHORT).show()
+                    }
+                    fileToRename = null
+                }
+            }
+        )
+    }
 
     if (!userData.termsAccepted) {
         TermsAndConditionsScreen(
@@ -121,218 +173,238 @@ fun HomeScreen(
             }
         )
     } else {
-        // Show the main dashboard if terms are accepted
-        FilesDashboard(
+        MainDashboard(
             navController = navController,
             localFiles = localFiles,
-            cloudFiles = cloudFiles,
-            isDriveConnected = isDriveConnected,
-            isCloudLoading = isCloudLoading // *** ADDED: Pass loading state ***
+            filteredFiles = filteredFiles,
+            searchQuery = searchQuery,
+            onSearchQueryChange = { searchQuery = it },
+            onSignClick = {
+                val signatures = SignatureRepository.getSavedSignatures(context)
+                if (signatures.isEmpty()) {
+                    showAddSigDialog = true
+                } else {
+                    showSelectFileDialog = true
+                }
+            },
+            onDeleteFile = { fileItem ->
+                filesToDelete = listOf(fileItem)
+                showDeleteDialog = true
+            },
+            onRenameFile = { fileItem ->
+                fileToRename = fileItem
+            }
         )
     }
 }
 
-// Extracted composable for the main file dashboard view
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FilesDashboard(
+fun MainDashboard(
     navController: NavController,
     localFiles: List<FileItem>,
-    cloudFiles: List<DriveFile>,
-    isDriveConnected: Boolean,
-    isCloudLoading: Boolean // *** ADDED: Receive loading state ***
+    filteredFiles: List<FileItem>,
+    searchQuery: String,
+    onSearchQueryChange: (String) -> Unit,
+    onSignClick: () -> Unit,
+    onDeleteFile: (FileItem) -> Unit,
+    onRenameFile: (FileItem) -> Unit
+) {
+    val focusManager = LocalFocusManager.current
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+        TopActionButtons(navController = navController, onSignClick = onSignClick)
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = onSearchQueryChange,
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Search local files") },
+            leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search") },
+            trailingIcon = {
+                if (searchQuery.isNotEmpty()) {
+                    IconButton(onClick = { onSearchQueryChange("") }) {
+                        Icon(Icons.Default.Close, contentDescription = "Clear search")
+                    }
+                }
+            },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            keyboardActions = KeyboardActions(onSearch = { focusManager.clearFocus() }),
+            shape = RoundedCornerShape(24.dp)
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+        Divider(modifier = Modifier.padding(vertical = 8.dp))
+
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(top = 16.dp)
+        ) {
+            if (searchQuery.isNotBlank()) {
+                if (filteredFiles.isEmpty()) {
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 32.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("No files found matching '$searchQuery'.")
+                        }
+                    }
+                } else {
+                    items(filteredFiles, key = { it.uri }) { file ->
+                        LocalFileRow(
+                            fileItem = file,
+                            navController = navController,
+                            selectionMode = false,
+                            isSelected = false,
+                            onToggleSelection = {},
+                            onLongPress = {},
+                            onDelete = { onDeleteFile(file) },
+                            onSign = {
+                                val encodedUri = URLEncoder.encode(file.uri.toString(), StandardCharsets.UTF_8.toString())
+                                navController.navigate("${Routes.PDF_SIGN.split('/')[0]}/$encodedUri")
+                            },
+                            onRename = { onRenameFile(file) }
+                        )
+                        Divider(modifier = Modifier.padding(vertical = 1.dp))
+                    }
+                }
+            } else {
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Recently Scanned Files", style = MaterialTheme.typography.headlineSmall)
+                        TextButton(onClick = { navController.navigate(Routes.FILES) }) {
+                            Text("View All")
+                        }
+                    }
+                }
+
+                if (localFiles.isEmpty()) {
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 32.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("No local files found. Tap 'Scan' to start!")
+                        }
+                    }
+                } else {
+                    items(localFiles.take(14), key = { it.uri }) { file ->
+                        LocalFileRow(
+                            fileItem = file,
+                            navController = navController,
+                            selectionMode = false,
+                            isSelected = false,
+                            onToggleSelection = {},
+                            onLongPress = {},
+                            onDelete = { onDeleteFile(file) },
+                            onSign = {
+                                val encodedUri = URLEncoder.encode(file.uri.toString(), StandardCharsets.UTF_8.toString())
+                                navController.navigate("${Routes.PDF_SIGN.split('/')[0]}/$encodedUri")
+                            },
+                            onRename = { onRenameFile(file) }
+                        )
+                        Divider(modifier = Modifier.padding(vertical = 1.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun TopActionButtons(
+    navController: NavController,
+    onSignClick: () -> Unit
 ) {
     val context = LocalContext.current
 
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        // *** UPDATED: Reduced spacing between sections ***
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        // Local Files Section
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text("Local Files", style = MaterialTheme.typography.headlineSmall)
-                TextButton(onClick = { navController.navigate(Routes.FILES) }) {
-                    Text("View All")
-                }
-            }
-            // Reduced space after header
-            // Spacer(modifier = Modifier.height(8.dp))
-        }
-        if (localFiles.isEmpty()) {
-            item { Text("No local files found in Downloads/DocuScanner.") }
-        } else {
-            // *** UPDATED: Show 5 items ***
-            items(localFiles.take(5)) { file ->
-                LocalFileItemRow(
-                    fileItem = file,
-                    onOpen = { openPdfFile(context, file.uri) },
-                    onPrint = { FileActions.printPdfFile(context, file.name ?: "Document", file.uri) },
-                    onEmail = { FileActions.emailPdfFile(context, file.name ?: "Document", file.uri) }
-                )
-                // Reduced space between file items
-                Divider(modifier = Modifier.padding(vertical = 2.dp))
-            }
-        }
-        item {
-            // Add space before next section divider
-            Spacer(modifier = Modifier.height(8.dp))
-            Divider(modifier = Modifier.padding(vertical = 4.dp))
-        }
-
-        // Cloud Files Section
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text("Cloud Files (Google Drive)", style = MaterialTheme.typography.headlineSmall)
-                TextButton(onClick = { navController.navigate(Routes.CLOUD_FILES) }) {
-                    Text("View All")
-                }
-            }
-            // Reduced space after header
-            // Spacer(modifier = Modifier.height(8.dp))
-        }
-        // *** UPDATED: Logic to show loading indicator ***
-        if (!isDriveConnected) {
-            item {
-                Text("Connect your Google Drive account from the 'Cloud' tab to view files here.")
-            }
-        } else if (isCloudLoading) { // Check loading state first
-            item {
-                Box(modifier = Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
-                }
-            }
-        } else if (cloudFiles.isEmpty()) {
-            item { Text("No files found in your Google Drive / DocuScanner folder.") }
-        } else {
-            // *** UPDATED: Show 5 items ***
-            items(cloudFiles.take(5)) { file ->
-                DriveFileItemRow(
-                    driveFile = file,
-                    onOpen = {
-                        Toast.makeText(context, "Open/Download Cloud File: ${file.name}", Toast.LENGTH_SHORT).show()
-                        Log.d("HomeScreen", "Request Open cloud file: ${file.name} (ID: ${file.id})")
-                    },
-                    onPrint = {
-                        Toast.makeText(context, "Print Cloud File: ${file.name}", Toast.LENGTH_SHORT).show()
-                        Log.d("HomeScreen", "Request Print cloud file: ${file.name} (ID: ${file.id})")
-                    },
-                    onEmail = {
-                        Toast.makeText(context, "Email Cloud File: ${file.name}", Toast.LENGTH_SHORT).show()
-                        Log.d("HomeScreen", "Request Email cloud file: ${file.name} (ID: ${file.id})")
-                    }
-                )
-                // Reduced space between file items
-                Divider(modifier = Modifier.padding(vertical = 2.dp))
-            }
-        }
-        item {
-            // Moved "View All" button to the header row
-        }
-    }
-}
-
-/**
- * Displays a row for a local file with action buttons.
- */
-@Composable
-fun LocalFileItemRow(
-    fileItem: FileItem,
-    onOpen: () -> Unit,
-    onPrint: () -> Unit,
-    onEmail: () -> Unit
-) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onOpen)
-            // *** UPDATED: Reduced vertical padding ***
-            .padding(vertical = 4.dp, horizontal = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(top = 8.dp, bottom = 8.dp),
+        horizontalArrangement = Arrangement.SpaceAround,
+        verticalAlignment = Alignment.Top
     ) {
-        Icon(
-            imageVector = Icons.Default.PictureAsPdf,
-            contentDescription = "PDF File",
-            modifier = Modifier.size(24.dp)
+        ActionButton(
+            text = "Scan",
+            icon = Icons.Default.CameraAlt,
+            onClick = { navController.navigate(Routes.CAMERA) }
         )
-        Spacer(modifier = Modifier.width(16.dp))
-        Text(
-            text = fileItem.name ?: "Unnamed Item",
-            style = MaterialTheme.typography.bodyLarge,
-            modifier = Modifier.weight(1f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
+        ActionButton(
+            text = "Sign",
+            icon = Icons.Default.Draw,
+            onClick = onSignClick
         )
-        // *** UPDATED: Slightly smaller touch target ***
-        IconButton(onClick = onPrint, modifier = Modifier.size(36.dp)) {
-            Icon(Icons.Default.Print, contentDescription = "Print")
-        }
-        // *** UPDATED: Slightly smaller touch target ***
-        IconButton(onClick = onEmail, modifier = Modifier.size(36.dp)) {
-            Icon(Icons.Default.Email, contentDescription = "Email")
-        }
+        ActionButton(
+            text = "Import",
+            icon = Icons.Default.Description,
+            onClick = {
+                Toast.makeText(context, "Import Files - Coming Soon!", Toast.LENGTH_SHORT).show()
+            }
+        )
+        ActionButton(
+            text = "Share",
+            icon = Icons.Default.Share,
+            onClick = {
+                Toast.makeText(context, "Share - Coming Soon!", Toast.LENGTH_SHORT).show()
+            }
+        )
     }
 }
 
-
-/**
- * Displays a row for a Google Drive file or folder with action icons.
- */
 @Composable
-fun DriveFileItemRow(
-    driveFile: DriveFile,
-    onOpen: () -> Unit,
-    onPrint: () -> Unit,
-    onEmail: () -> Unit
+fun ActionButton(
+    text: String,
+    icon: ImageVector,
+    onClick: () -> Unit
 ) {
-    val isFolder = driveFile.mimeType == "application/vnd.google-apps.folder"
-
-    Row(
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onOpen)
-            // *** UPDATED: Reduced vertical padding ***
-            .padding(vertical = 4.dp, horizontal = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = LocalIndication.current,
+                onClick = onClick)
+            .padding(4.dp)
+            .width(IntrinsicSize.Min)
     ) {
-        Icon(
-            imageVector = if (isFolder) Icons.Default.Folder else Icons.Default.PictureAsPdf,
-            contentDescription = if (isFolder) "Folder" else "PDF File",
-            modifier = Modifier.size(24.dp)
-        )
-        Spacer(modifier = Modifier.width(16.dp))
-        Text(
-            text = driveFile.name ?: "Unnamed Item",
-            style = MaterialTheme.typography.bodyLarge,
-            modifier = Modifier.weight(1f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-        if (!isFolder) {
-            // *** UPDATED: Slightly smaller touch target ***
-            IconButton(onClick = onPrint, modifier = Modifier.size(36.dp)) {
-                Icon(Icons.Default.Print, contentDescription = "Print")
-            }
-            // *** UPDATED: Slightly smaller touch target ***
-            IconButton(onClick = onEmail, modifier = Modifier.size(36.dp)) {
-                Icon(Icons.Default.Email, contentDescription = "Email")
-            }
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = text,
+                modifier = Modifier.size(28.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
         }
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(text = text, style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp))
     }
 }
 
 
-// Extracted composable for the terms and conditions screen
 @Composable
 fun TermsAndConditionsScreen(onAccept: () -> Unit) {
     Column(
@@ -358,7 +430,10 @@ fun TermsAndConditionsScreen(onAccept: () -> Unit) {
         Spacer(modifier = Modifier.height(24.dp))
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.clickable(onClick = onAccept)
+            modifier = Modifier.clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = LocalIndication.current,
+                onClick = onAccept)
         ) {
             Checkbox(
                 checked = false,
@@ -370,65 +445,4 @@ fun TermsAndConditionsScreen(onAccept: () -> Unit) {
     }
 }
 
-
-// --- Helper Functions ---
-
-// Function to load local PDF files from Downloads/DocuScanner
-private suspend fun loadLocalFiles(context: Context): List<FileItem> = withContext(Dispatchers.IO) {
-    val files = mutableListOf<FileItem>()
-    val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-        MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL)
-    } else {
-        MediaStore.Files.getContentUri("external")
-    }
-
-    val selection = "${MediaStore.Files.FileColumns.MIME_TYPE} = ? AND ${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?"
-    val selectionArgs = arrayOf("application/pdf", "%Download/DocuScanner%")
-    val sortOrder = "${MediaStore.Files.FileColumns.DATE_ADDED} DESC"
-
-    context.contentResolver.query(
-        collection,
-        arrayOf(
-            MediaStore.Files.FileColumns._ID,
-            MediaStore.Files.FileColumns.DISPLAY_NAME,
-            MediaStore.Files.FileColumns.SIZE
-        ),
-        selection,
-        selectionArgs,
-        sortOrder
-    )?.use { cursor ->
-        val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID)
-        val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DISPLAY_NAME)
-        val sizeColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.SIZE)
-
-        while (cursor.moveToNext()) {
-            val id = cursor.getLong(idColumn)
-            val name = cursor.getString(nameColumn)
-            val size = cursor.getLong(sizeColumn)
-            val contentUri: Uri = ContentUris.withAppendedId(collection, id)
-            files.add(FileItem(name, size, contentUri))
-        }
-    }
-    Log.d("HomeScreen", "Found ${files.size} local PDF files.")
-    return@withContext files
-}
-
-// Function to open a PDF file using an Intent
-private fun openPdfFile(context: Context, uri: Uri) {
-    val intent = Intent(Intent.ACTION_VIEW).apply {
-        setDataAndType(uri, "application/pdf")
-        flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK
-    }
-    try {
-        context.startActivity(intent)
-    } catch (e: ActivityNotFoundException) {
-        Toast.makeText(context, "No PDF viewer app found", Toast.LENGTH_SHORT).show()
-        Log.e("HomeScreen", "No PDF viewer app found for URI: $uri", e)
-    } catch (e: Exception) {
-        Toast.makeText(context, "Could not open file", Toast.LENGTH_SHORT).show()
-        Log.e("HomeScreen", "Error opening file URI: $uri", e)
-    }
-}
-
-// *** REMOVED printPdfFile and emailPdfFile functions - Moved to FileActions.kt ***
-
+// *** REMOVED ALL DUPLICATE HELPER FUNCTIONS ***

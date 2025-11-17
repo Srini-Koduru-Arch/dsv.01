@@ -1,10 +1,13 @@
 [versions]
 agp = "8.9.1"
+androidPdfViewer = "3.2.0-beta.3"
+androidPdfViewerVersion = "3.2.0-beta.3"
 cameraCore = "1.4.2"
 coilComposeVersion = "2.5.0"
 composeBomVersion = "2024.01.01"
 googleApiClientAndroid = "2.8.1"
 googleApiClientAndroidVersion = "2.2.0"
+itextBom = "8.0.4"
 kotlin = "1.8.22"
 coreKtx = "1.15.0"
 junit = "4.13.2"
@@ -18,14 +21,19 @@ lifecycleViewmodelCompose = "2.9.2"
 materialIconsExtended = "1.7.7"
 navigationCompose = "2.8.8"
 navigationRuntimeKtx = "2.8.8"
+pdfViewer = "1.1.0-beta01"
 playServicesAdsApi = "24.4.0"
 playServicesAdsLite = "24.0.0"
 datastore = "1.1.7"
 play-service-auth = "21.4.0"
 google-api-client = "2.2.0"
 google-http-client = "1.42.3"
+ui = "1.9.4"
+uiUnit = "1.9.4"
+#androidPdfViewer = "3.2.0-beta.3"
 
 [libraries]
+android-pdf-viewer = { module = "com.github.barteksc:android-pdf-viewer", version.ref = "androidPdfViewer" }
 androidx-camera-camera2 = { module = "androidx.camera:camera-camera2", version.ref = "cameraCore" }
 androidx-camera-core = { module = "androidx.camera:camera-core", version.ref = "cameraCore" }
 androidx-camera-extensions = { module = "androidx.camera:camera-extensions", version.ref = "cameraCore" }
@@ -33,16 +41,21 @@ androidx-camera-lifecycle = { module = "androidx.camera:camera-lifecycle", versi
 androidx-camera-video = { module = "androidx.camera:camera-video", version.ref = "cameraCore" }
 androidx-camera-view = { module = "androidx.camera:camera-view", version.ref = "cameraCore" }
 androidx-compose-bom-v20240101 = { module = "androidx.compose:compose-bom", version.ref = "composeBomVersion" }
+androidx-compose-material-icons-extended = { module = "androidx.compose.material:material-icons-extended" }
+androidx-compose-ui = { module = "androidx.compose.ui:ui", version.ref = "ui" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-lifecycle-runtime-ktx-v292 = { module = "androidx.lifecycle:lifecycle-runtime-ktx", version.ref = "lifecycleRuntimeKtxVersion" }
 androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycleViewmodelCompose" }
 androidx-material-icons-extended = { module = "androidx.compose.material:material-icons-extended", version.ref = "materialIconsExtended" }
 androidx-navigation-compose = { module = "androidx.navigation:navigation-compose", version.ref = "navigationCompose" }
+androidx-pdf-viewer = { module = "androidx.pdf:pdf-viewer", version.ref = "pdfViewer" }
 coil-kt-coil-compose = { module = "io.coil-kt:coil-compose", version.ref = "coilComposeVersion" }
 google-api-client = { group = "com.google.api-client", name = "google-api-client", version.ref = "google-api-client" }
 google-api-client-android = { module = "com.google.api-client:google-api-client-android", version.ref = "google-api-client" }
 google-api-client-gson = { module = "com.google.api-client:google-api-client-gson", version.ref = "google-api-client" }
 google-http-client-android = { group = "com.google.http-client", name = "google-http-client-android", version.ref = "google-http-client" }
+itext-bom = { module = "com.itextpdf:itext-bom", version.ref = "itextBom" }
+itext-core = { module = "com.itextpdf:itext-core" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
@@ -57,6 +70,7 @@ androidx-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-man
 androidx-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4" }
 androidx-material3 = { group = "androidx.compose.material3", name = "material3" }
 material3 = { module = "androidx.compose.material3:material3" }
+mhiew-android-pdf-viewer = { module = "com.github.mhiew:android-pdf-viewer", version.ref = "androidPdfViewerVersion" }
 play-services-auth = { group = "com.google.android.gms", name = "play-services-auth", version.ref = "play.service.auth" }
 ui = { module = "androidx.compose.ui:ui" }
 ui-tooling = { module = "androidx.compose.ui:ui-tooling" }
@@ -65,7 +79,9 @@ androidx-navigation-runtime-ktx = { group = "androidx.navigation", name = "navig
 play-services-ads-api = { group = "com.google.android.gms", name = "play-services-ads-api", version.ref = "playServicesAdsApi" }
 #play-services-ads-lite = { group = "com.google.android.gms", name = "play-services-ads-lite", version.ref = "playServicesAdsLite" }
 androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
+androidx-compose-ui-unit = { group = "androidx.compose.ui", name = "ui-unit", version.ref = "uiUnit" }
 #play-services-identity = { group = "com.google.android.gms", name = "play-services-identity", version.ref = "play-services-identity" }
+#android-pdf-viewer = { group = "com.github.barteksc", name = "android-pdf-viewer", version.ref = "androidPdfViewer" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

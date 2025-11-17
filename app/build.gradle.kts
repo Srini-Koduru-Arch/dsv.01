@@ -23,6 +23,11 @@ android {
             resources {
                 excludes.add("META-INF/DEPENDENCIES")
             }
+            jniLibs {
+                // This tells Gradle to pick the first copy of the file it finds
+                // and ignore all other duplicates.
+                pickFirsts.add("**/libc++_shared.so")
+            }
         }
     }
 
@@ -80,6 +85,7 @@ dependencies {
     implementation(libs.androidx.navigation.runtime.ktx)
     implementation(libs.androidx.navigation.compose)
     implementation(libs.play.services.ads.api)
+    implementation(libs.androidx.compose.ui.unit)
     debugImplementation(libs.ui.tooling)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
@@ -110,4 +116,7 @@ dependencies {
     implementation(libs.google.api.client.android)
     implementation(libs.google.api.client.gson)
     implementation(libs.google.http.client.android)
+    implementation(libs.mhiew.android.pdf.viewer)
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
+    implementation("androidx.compose.material:material-icons-extended:1.7.8")
 }

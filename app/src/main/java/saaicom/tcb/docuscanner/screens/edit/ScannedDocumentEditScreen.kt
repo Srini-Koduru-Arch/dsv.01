@@ -1,12 +1,10 @@
 package saaicom.tcb.docuscanner.screens.edit
 
-import android.content.ContentValues
 import android.graphics.Bitmap
 import android.graphics.ImageDecoder
-import android.graphics.Paint // Import Paint
-import android.graphics.Rect
+import android.graphics.Paint
 import android.graphics.RectF
-import android.graphics.Typeface // Import Typeface
+import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
 import android.net.Uri
 import android.os.Build
@@ -19,14 +17,13 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.NavigateBefore
+import androidx.compose.material.icons.filled.NavigateNext
 import androidx.compose.material.icons.filled.PictureAsPdf
-import androidx.compose.material.icons.filled.NavigateBefore // Import icon for "Back"
-import androidx.compose.material.icons.filled.NavigateNext // Import icon for "Next"
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -42,37 +39,28 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.style.TextAlign // Import TextAlign
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
-import com.google.api.client.http.ByteArrayContent
-import com.google.api.services.drive.Drive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.opencv.core.Point
-import saaicom.tcb.docuscanner.DocumentRepository // *** FIX HERE: Import the repository ***
-import saaicom.tcb.docuscanner.DriveRepository // *** FIX HERE: Added missing import ***
+import saaicom.tcb.docuscanner.DocumentRepository
+import saaicom.tcb.docuscanner.FileActions
 import saaicom.tcb.docuscanner.Routes
 import saaicom.tcb.docuscanner.Scanner
-import java.io.ByteArrayOutputStream
 import java.io.IOException
 import kotlin.math.min
-
-// Define save destinations
-private sealed class SaveDestination {
-    object Local : SaveDestination()
-    object Cloud : SaveDestination()
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ScannedDocumentEditScreen(
     navController: NavController,
     imageUri: Uri
+    // *** FIX: The 'corners' parameter is removed from this function definition ***
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -84,9 +72,6 @@ fun ScannedDocumentEditScreen(
 
     var scannedPageBitmaps by remember { mutableStateOf<List<Bitmap>>(DocumentRepository.getAllPages()) }
     var currentPageIndex by remember { mutableStateOf(DocumentRepository.getPageCount() - 1) }
-
-    val driveService by DriveRepository.driveService.collectAsState()
-    val isCloudSaveEnabled = driveService != null
 
     LaunchedEffect(imageUri) {
         isLoading = true
@@ -143,55 +128,29 @@ fun ScannedDocumentEditScreen(
 
     if (showPdfDialog) {
         SavePdfDialog(
-            isCloudSaveEnabled = isCloudSaveEnabled,
             onDismiss = { showPdfDialog = false },
-            onSave = { fileName, destination -> // Capture destination here
+            onSave = { fileName ->
                 showPdfDialog = false
                 isLoading = true
-                scope.launch(Dispatchers.IO) {
-                    val jobName = when (destination) {
-                        is SaveDestination.Local -> "Local PDF"
-                        is SaveDestination.Cloud -> "Cloud PDF"
-                    }
-                    val onComplete: (Boolean) -> Unit = { success ->
-                        scope.launch(Dispatchers.Main) {
+                scope.launch {
+                    FileActions.saveBitmapsAsPdf(
+                        bitmaps = scannedPageBitmaps,
+                        fileName = fileName,
+                        context = context,
+                        onComplete = { success ->
                             isLoading = false
                             if (success) {
-                                Toast.makeText(context, "$jobName saved successfully", Toast.LENGTH_LONG).show()
+                                Toast.makeText(context, "Local PDF saved successfully", Toast.LENGTH_LONG).show()
                                 DocumentRepository.clear()
-                                // *** FIX HERE: Conditional Navigation ***
-                                val targetRoute = when (destination) {
-                                    is SaveDestination.Local -> Routes.FILES
-                                    is SaveDestination.Cloud -> Routes.CLOUD_FILES
-                                }
-                                navController.navigate(targetRoute) {
-                                    popUpTo(Routes.HOME) // Clear back stack to Home
-                                    launchSingleTop = true // Avoid multiple instances
+                                navController.navigate(Routes.FILES) {
+                                    popUpTo(Routes.HOME)
+                                    launchSingleTop = true
                                 }
                             } else {
-                                Toast.makeText(context, "Failed to save $jobName", Toast.LENGTH_LONG).show()
+                                Toast.makeText(context, "Failed to save Local PDF", Toast.LENGTH_LONG).show()
                             }
                         }
-                    }
-
-                    when (destination) {
-                        is SaveDestination.Local -> {
-                            saveBitmapsAsPdf_Local(
-                                bitmaps = scannedPageBitmaps,
-                                fileName = fileName,
-                                context = context,
-                                onComplete = onComplete
-                            )
-                        }
-                        is SaveDestination.Cloud -> {
-                            saveBitmapsAsPdf_Cloud(
-                                driveService = driveService,
-                                bitmaps = scannedPageBitmaps,
-                                fileName = fileName,
-                                onComplete = onComplete
-                            )
-                        }
-                    }
+                    )
                 }
             }
         )
@@ -213,10 +172,10 @@ fun ScannedDocumentEditScreen(
                     Text(
                         text = if (scannedPageBitmaps.size > 1) {
                             "Page ${currentPageIndex + 1} of ${scannedPageBitmaps.size}"
-                        } else if (croppedBitmap == null) { // Show "Adjust Edges" only in crop mode
+                        } else if (croppedBitmap == null) {
                             "Adjust Edges"
                         } else {
-                            "Document Ready" // Show when viewing cropped single page
+                            "Document Ready"
                         },
                         color = MaterialTheme.colorScheme.onPrimary,
                         textAlign = TextAlign.Center
@@ -253,10 +212,12 @@ fun ScannedDocumentEditScreen(
 
                                     val newBitmap = finalData.scanned ?: finalData.original
                                     DocumentRepository.replacePage(currentPageIndex, newBitmap)
-                                    // Update local state immediately for smoother transition
                                     scannedPageBitmaps = DocumentRepository.getAllPages()
-                                    croppedBitmap = newBitmap // Switch view to cropped
-                                    isLoading = false
+
+                                    withContext(Dispatchers.Main) {
+                                        croppedBitmap = newBitmap
+                                        isLoading = false
+                                    }
                                 }
                             }
                         }) {
@@ -330,7 +291,6 @@ fun ScannedDocumentEditScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .clickable {
-                            // Allow re-cropping by going back to Adjust view
                             croppedBitmap = null
                         }
                 )
@@ -348,12 +308,10 @@ fun ScannedDocumentEditScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SavePdfDialog(
-    isCloudSaveEnabled: Boolean,
     onDismiss: () -> Unit,
-    onSave: (String, SaveDestination) -> Unit
+    onSave: (String) -> Unit
 ) {
-    var text by remember { mutableStateOf("DocuScan-${System.currentTimeMillis()}.pdf") } // Updated default name
-    var selectedDestination by remember { mutableStateOf<SaveDestination>(SaveDestination.Local) }
+    var text by remember { mutableStateOf("DocuScan-${System.currentTimeMillis()}.pdf") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -367,67 +325,11 @@ private fun SavePdfDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
-                Spacer(modifier = Modifier.height(16.dp))
-                Text("Save Location:", style = MaterialTheme.typography.bodyMedium)
-
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .selectable(
-                            selected = (selectedDestination is SaveDestination.Local),
-                            onClick = { selectedDestination = SaveDestination.Local },
-                            role = Role.RadioButton
-                        )
-                        .padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    RadioButton(
-                        selected = (selectedDestination is SaveDestination.Local),
-                        onClick = null
-                    )
-                    Text(
-                        text = "Local Downloads Folder",
-                        style = MaterialTheme.typography.bodyLarge,
-                        modifier = Modifier.padding(start = 16.dp)
-                    )
-                }
-
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .selectable(
-                            selected = (selectedDestination is SaveDestination.Cloud),
-                            onClick = { selectedDestination = SaveDestination.Cloud },
-                            role = Role.RadioButton,
-                            enabled = isCloudSaveEnabled
-                        )
-                        .padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    RadioButton(
-                        selected = (selectedDestination is SaveDestination.Cloud),
-                        onClick = null,
-                        enabled = isCloudSaveEnabled
-                    )
-                    Text(
-                        text = "Google Drive / DocuScanner",
-                        style = MaterialTheme.typography.bodyLarge,
-                        modifier = Modifier.padding(start = 16.dp),
-                        color = if (isCloudSaveEnabled) LocalContentColor.current else LocalContentColor.current.copy(alpha = 0.38f)
-                    )
-                }
-                if (!isCloudSaveEnabled) {
-                    Text(
-                        text = "Sign in from the 'Cloud' tab to enable",
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(start = 56.dp)
-                    )
-                }
             }
         },
         confirmButton = {
             Button(
-                onClick = { if (text.isNotBlank()) onSave(text, selectedDestination) },
+                onClick = { if (text.isNotBlank()) onSave(text) },
                 enabled = text.isNotBlank()
             ) {
                 Text("Save")
@@ -440,172 +342,6 @@ private fun SavePdfDialog(
         }
     )
 }
-
-private fun saveBitmapsAsPdf_Local(
-    bitmaps: List<Bitmap>,
-    fileName: String,
-    context: android.content.Context,
-    onComplete: (Boolean) -> Unit
-) {
-    val pdfDocument = PdfDocument()
-
-    val PAGE_WIDTH = 595
-    val PAGE_HEIGHT = 842
-    val PAGE_MARGIN = 36f
-
-    val footerPaint = Paint().apply {
-        color = android.graphics.Color.DKGRAY
-        textSize = 10f
-        textAlign = Paint.Align.CENTER
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.ITALIC)
-        isAntiAlias = true
-    }
-    val footerText = "Created by using Saaicom's DocuScanner App"
-    val footerMargin = 20f
-
-    try {
-        bitmaps.forEachIndexed { index, bitmap ->
-            val pageInfo = PdfDocument.PageInfo.Builder(PAGE_WIDTH, PAGE_HEIGHT, index + 1).create()
-            val page = pdfDocument.startPage(pageInfo)
-            val canvas = page.canvas
-            val contentWidth = PAGE_WIDTH - 2 * PAGE_MARGIN
-            val contentHeight = PAGE_HEIGHT - 2 * PAGE_MARGIN
-            val bitmapAspectRatio = bitmap.width.toFloat() / bitmap.height.toFloat()
-            val contentAspectRatio = contentWidth / contentHeight
-            val destRect = RectF()
-            if (bitmapAspectRatio > contentAspectRatio) {
-                val scaledHeight = contentWidth / bitmapAspectRatio
-                val top = PAGE_MARGIN + (contentHeight - scaledHeight) / 2
-                destRect.set(PAGE_MARGIN, top, PAGE_MARGIN + contentWidth, top + scaledHeight)
-            } else {
-                val scaledWidth = contentHeight * bitmapAspectRatio
-                val left = PAGE_MARGIN + (contentWidth - scaledWidth) / 2
-                destRect.set(left, PAGE_MARGIN, left + scaledWidth, PAGE_MARGIN + contentHeight)
-            }
-            canvas.drawBitmap(bitmap, null, destRect, null)
-            val xPos = (PAGE_WIDTH / 2).toFloat()
-            val yPos = PAGE_HEIGHT - footerMargin
-            canvas.drawText(footerText, xPos, yPos, footerPaint)
-            pdfDocument.finishPage(page)
-        }
-
-        val contentValues = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
-            put(MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.MediaColumns.RELATIVE_PATH, "Download/DocuScanner")
-                put(MediaStore.MediaColumns.IS_PENDING, 1)
-            }
-        }
-
-        val resolver = context.contentResolver
-        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
-
-        if (uri != null) {
-            resolver.openOutputStream(uri).use { outputStream ->
-                pdfDocument.writeTo(outputStream)
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                contentValues.clear()
-                contentValues.put(MediaStore.MediaColumns.IS_PENDING, 0)
-                resolver.update(uri, contentValues, null, null)
-            }
-            onComplete(true)
-        } else {
-            onComplete(false)
-        }
-    } catch (e: IOException) {
-        Log.e("SavePdf", "Error writing PDF", e)
-        onComplete(false)
-    } finally {
-        pdfDocument.close()
-    }
-}
-
-private suspend fun saveBitmapsAsPdf_Cloud(
-    driveService: Drive?,
-    bitmaps: List<Bitmap>,
-    fileName: String,
-    onComplete: (Boolean) -> Unit
-) {
-    if (driveService == null) {
-        onComplete(false)
-        return
-    }
-
-    val pdfDocument = PdfDocument()
-    val outputStream = ByteArrayOutputStream()
-
-    val PAGE_WIDTH = 595
-    val PAGE_HEIGHT = 842
-    val PAGE_MARGIN = 36f
-
-    val footerPaint = Paint().apply {
-        color = android.graphics.Color.DKGRAY
-        textSize = 10f
-        textAlign = Paint.Align.CENTER
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.ITALIC)
-        isAntiAlias = true
-    }
-    val footerText = "Created by using Saaicom's DocuScanner App"
-    val footerMargin = 20f
-
-    try {
-        val folderId = DriveRepository.findOrCreateDocuScannerFolder(driveService)
-        if (folderId == null) {
-            Log.e("SavePdfCloud", "Could not find or create DocuScanner folder")
-            onComplete(false)
-            return
-        }
-
-        bitmaps.forEachIndexed { index, bitmap ->
-            val pageInfo = PdfDocument.PageInfo.Builder(PAGE_WIDTH, PAGE_HEIGHT, index + 1).create()
-            val page = pdfDocument.startPage(pageInfo)
-            val canvas = page.canvas
-            val contentWidth = PAGE_WIDTH - 2 * PAGE_MARGIN
-            val contentHeight = PAGE_HEIGHT - 2 * PAGE_MARGIN
-            val bitmapAspectRatio = bitmap.width.toFloat() / bitmap.height.toFloat()
-            val contentAspectRatio = contentWidth / contentHeight
-            val destRect = RectF()
-            if (bitmapAspectRatio > contentAspectRatio) {
-                val scaledHeight = contentWidth / bitmapAspectRatio
-                val top = PAGE_MARGIN + (contentHeight - scaledHeight) / 2
-                destRect.set(PAGE_MARGIN, top, PAGE_MARGIN + contentWidth, top + scaledHeight)
-            } else {
-                val scaledWidth = contentHeight * bitmapAspectRatio
-                val left = PAGE_MARGIN + (contentWidth - scaledWidth) / 2
-                destRect.set(left, PAGE_MARGIN, left + scaledWidth, PAGE_MARGIN + contentHeight)
-            }
-            canvas.drawBitmap(bitmap, null, destRect, null)
-            val xPos = (PAGE_WIDTH / 2).toFloat()
-            val yPos = PAGE_HEIGHT - footerMargin
-            canvas.drawText(footerText, xPos, yPos, footerPaint)
-            pdfDocument.finishPage(page)
-        }
-
-        pdfDocument.writeTo(outputStream)
-
-        val mediaContent = ByteArrayContent("application/pdf", outputStream.toByteArray())
-        val fileMetadata = com.google.api.services.drive.model.File().apply {
-            name = if (fileName.endsWith(".pdf")) fileName else "$fileName.pdf"
-            parents = listOf(folderId)
-        }
-
-        driveService.files().create(fileMetadata, mediaContent)
-            .setFields("id")
-            .execute()
-
-        onComplete(true)
-
-    } catch (e: Exception) {
-        Log.e("SavePdfCloud", "Error saving PDF to Drive", e)
-        onComplete(false)
-    } finally {
-        pdfDocument.close()
-        outputStream.close()
-    }
-}
-
 
 @Composable
 fun AdjustableCropView(
@@ -797,4 +533,3 @@ fun AdjustableCropView(
         modifier = modifier
     )
 }
-
