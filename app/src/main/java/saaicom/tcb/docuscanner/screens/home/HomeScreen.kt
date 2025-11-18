@@ -40,7 +40,7 @@ import saaicom.tcb.docuscanner.ui.components.DeleteConfirmationDialog
 import saaicom.tcb.docuscanner.ui.components.LocalFileRow // *** UPDATED IMPORT ***
 import saaicom.tcb.docuscanner.ui.components.RenameFileDialog
 import saaicom.tcb.docuscanner.ui.components.SelectFileDialog
-import saaicom.tcb.docuscanner.utils.loadLocalFiles // *** UPDATED IMPORT ***
+import saaicom.tcb.docuscanner.utils.FileUtils.loadLocalFiles // *** UPDATED IMPORT ***
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 

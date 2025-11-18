@@ -2,10 +2,6 @@ package saaicom.tcb.docuscanner.screens.edit
 
 import android.graphics.Bitmap
 import android.graphics.ImageDecoder
-import android.graphics.Paint
-import android.graphics.RectF
-import android.graphics.Typeface
-import android.graphics.pdf.PdfDocument
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
@@ -16,6 +12,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource // Added import
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
@@ -52,31 +49,42 @@ import saaicom.tcb.docuscanner.DocumentRepository
 import saaicom.tcb.docuscanner.FileActions
 import saaicom.tcb.docuscanner.Routes
 import saaicom.tcb.docuscanner.Scanner
-import java.io.IOException
+import saaicom.tcb.docuscanner.utils.FileUtils // Make sure this matches your package
 import kotlin.math.min
+
+// --- Constants ---
+private const val ANALYSIS_WIDTH = 720.0
+private const val ANALYSIS_HEIGHT = 1280.0
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ScannedDocumentEditScreen(
     navController: NavController,
-    imageUri: Uri
-    // *** FIX: The 'corners' parameter is removed from this function definition ***
+    imageUri: Uri,
+    cornersJson: String?
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+
+    // State
     var originalBitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var croppedBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var croppedBitmap by remember { mutableStateOf<Bitmap?>(null) } // Current page DISPLAY bitmap
     var cornerPoints by remember { mutableStateOf<List<Offset>?>(null) }
     var showPdfDialog by remember { mutableStateOf(false) }
     var isLoading by remember { mutableStateOf(false) }
 
-    var scannedPageBitmaps by remember { mutableStateOf<List<Bitmap>>(DocumentRepository.getAllPages()) }
+    // --- UPDATED: Use URIs instead of Bitmaps for the list ---
+    var scannedPageUris by remember { mutableStateOf<List<Uri>>(DocumentRepository.getAllPages()) }
     var currentPageIndex by remember { mutableStateOf(DocumentRepository.getPageCount() - 1) }
 
-    LaunchedEffect(imageUri) {
+    var pageHasBeenAdded by remember { mutableStateOf(false) }
+
+
+    LaunchedEffect(imageUri, cornersJson) {
         isLoading = true
         withContext(Dispatchers.IO) {
             try {
+                // 1. Load the full-resolution bitmap for EDITING
                 val bitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                     val source = ImageDecoder.createSource(context.contentResolver, imageUri)
                     ImageDecoder.decodeBitmap(source) { decoder, _, _ ->
@@ -88,35 +96,40 @@ fun ScannedDocumentEditScreen(
                     legacyBitmap.copy(Bitmap.Config.ARGB_8888, true)
                 }
 
-                val scanner = Scanner()
-                val edgeData = scanner.detectEdges(bitmap)
-                val detectedCorners = edgeData.corners?.toArray()
+                // 2. Scaling Logic (Fixes handle position on high-res photos)
+                val bitmapWidth = bitmap.width.toDouble()
+                val bitmapHeight = bitmap.height.toDouble()
+                val scaleX = bitmapWidth / ANALYSIS_WIDTH
+                val scaleY = bitmapHeight / ANALYSIS_HEIGHT
 
-                val finalData = scanner.applyPerspectiveTransform(edgeData)
-                val autoCroppedBitmap = finalData.scanned ?: finalData.original
+                val detectedCorners: List<Offset> = if (cornersJson != null) {
+                    try {
+                        cornersJson.split(",").map {
+                            val parts = it.split(":")
+                            val lowResX = parts[0].toFloat()
+                            val lowResY = parts[1].toFloat()
+                            Offset((lowResX * scaleX).toFloat(), (lowResY * scaleY).toFloat())
+                        }
+                    } catch (e: Exception) { null }
+                } else { null } ?: listOf(
+                    Offset(0f, 0f),
+                    Offset(bitmapWidth.toFloat(), 0f),
+                    Offset(bitmapWidth.toFloat(), bitmapHeight.toFloat()),
+                    Offset(0f, bitmapHeight.toFloat())
+                )
 
-                DocumentRepository.addPage(autoCroppedBitmap)
-                val allPages = DocumentRepository.getAllPages()
-                val newPageIndex = allPages.size - 1
-
+                // 3. Set Initial State
                 originalBitmap = bitmap
                 croppedBitmap = null // Start in edit mode
-                cornerPoints = if (detectedCorners != null && detectedCorners.size == 4) {
-                    detectedCorners.map { Offset(it.x.toFloat(), it.y.toFloat()) }
-                } else {
-                    listOf(
-                        Offset(0f, 0f),
-                        Offset(bitmap.width.toFloat(), 0f),
-                        Offset(bitmap.width.toFloat(), bitmap.height.toFloat()),
-                        Offset(0f, bitmap.height.toFloat())
-                    )
-                }
+                cornerPoints = detectedCorners
+                pageHasBeenAdded = false
 
-                scannedPageBitmaps = allPages
-                currentPageIndex = newPageIndex
+                // Update URI list state
+                scannedPageUris = DocumentRepository.getAllPages()
+                currentPageIndex = DocumentRepository.getPageCount()
 
             } catch (e: Exception) {
-                Log.e("EditScreen", "Failed to load or process image.", e)
+                Log.e("EditScreen", "Failed to load image.", e)
                 scope.launch(Dispatchers.Main) {
                     Toast.makeText(context, "Failed to load image", Toast.LENGTH_SHORT).show()
                     navController.popBackStack()
@@ -126,28 +139,34 @@ fun ScannedDocumentEditScreen(
         isLoading = false
     }
 
+    // --- Dialog with Debug Logs ---
     if (showPdfDialog) {
         SavePdfDialog(
             onDismiss = { showPdfDialog = false },
             onSave = { fileName ->
+                android.util.Log.e("SaveDebug", "1. CALLBACK: onSave lambda triggered with: $fileName")
                 showPdfDialog = false
                 isLoading = true
                 scope.launch {
+                    android.util.Log.e("SaveDebug", "2. SCOPE: Coroutine launched. Calling FileActions...")
+
+                    // --- UPDATED: Pass list of URIs ---
                     FileActions.saveBitmapsAsPdf(
-                        bitmaps = scannedPageBitmaps,
+                        uris = scannedPageUris, // Using URIs now
                         fileName = fileName,
                         context = context,
                         onComplete = { success ->
+                            android.util.Log.e("SaveDebug", "3. RESULT: onComplete received. Success=$success")
                             isLoading = false
                             if (success) {
-                                Toast.makeText(context, "Local PDF saved successfully", Toast.LENGTH_LONG).show()
+                                Toast.makeText(context, "Saved Successfully!", Toast.LENGTH_LONG).show()
                                 DocumentRepository.clear()
                                 navController.navigate(Routes.FILES) {
                                     popUpTo(Routes.HOME)
                                     launchSingleTop = true
                                 }
                             } else {
-                                Toast.makeText(context, "Failed to save Local PDF", Toast.LENGTH_LONG).show()
+                                Toast.makeText(context, "Failed to save PDF", Toast.LENGTH_LONG).show()
                             }
                         }
                     )
@@ -159,19 +178,14 @@ fun ScannedDocumentEditScreen(
     Scaffold(
         topBar = {
             Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(42.dp),
+                modifier = Modifier.fillMaxWidth().height(42.dp),
                 color = MaterialTheme.colorScheme.primary,
                 shadowElevation = 4.dp
             ) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(
-                        text = if (scannedPageBitmaps.size > 1) {
-                            "Page ${currentPageIndex + 1} of ${scannedPageBitmaps.size}"
+                        text = if (scannedPageUris.isNotEmpty()) { // Updated variable
+                            "Page ${currentPageIndex + 1} of ${scannedPageUris.size}"
                         } else if (croppedBitmap == null) {
                             "Adjust Edges"
                         } else {
@@ -185,37 +199,65 @@ fun ScannedDocumentEditScreen(
         },
         bottomBar = {
             Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(42.dp),
+                modifier = Modifier.fillMaxWidth().height(42.dp),
                 color = MaterialTheme.colorScheme.primary,
                 shadowElevation = 4.dp
             ) {
                 if (croppedBitmap == null && originalBitmap != null) {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        // --- CROP BUTTON (Updated Logic) ---
                         Button(onClick = {
                             val ob = originalBitmap
                             val cp = cornerPoints
                             if (ob != null && cp != null) {
                                 isLoading = true
                                 scope.launch(Dispatchers.IO) {
+                                    Log.e("CropDebug", "1. Starting Crop...")
+
+                                    // 1. Perform Crop
                                     val scanner = Scanner()
                                     val ocvPoints = cp.map { Point(it.x.toDouble(), it.y.toDouble()) }.toTypedArray()
+
+                                    // Sort points to prevent flipping
                                     val scannedData = Scanner.ScannedData(
                                         original = ob,
                                         corners = org.opencv.core.MatOfPoint2f(*ocvPoints)
                                     )
                                     val finalData = scanner.applyPerspectiveTransform(scannedData)
-
                                     val newBitmap = finalData.scanned ?: finalData.original
-                                    DocumentRepository.replacePage(currentPageIndex, newBitmap)
-                                    scannedPageBitmaps = DocumentRepository.getAllPages()
+
+                                    // --- NEW: Save to Disk Immediately ---
+                                    val newUri = FileUtils.saveBitmapToTempFile(context, newBitmap)
+
+                                    // 2. Add to Repo Logic
+                                    val currentRepoSize = DocumentRepository.getPageCount()
+
+                                    if (currentRepoSize == 0) {
+                                        DocumentRepository.addPage(newUri)
+                                        pageHasBeenAdded = true
+                                    } else if (!pageHasBeenAdded) {
+                                        DocumentRepository.addPage(newUri)
+                                        pageHasBeenAdded = true
+                                    } else {
+                                        if (currentPageIndex < currentRepoSize) {
+                                            DocumentRepository.replacePage(currentPageIndex, newUri)
+                                        } else {
+                                            DocumentRepository.addPage(newUri)
+                                        }
+                                    }
+
+                                    // 3. Refresh State
+                                    val allPages = DocumentRepository.getAllPages()
+                                    val newIndex = if (allPages.isNotEmpty()) allPages.size - 1 else 0
 
                                     withContext(Dispatchers.Main) {
+                                        // We keep newBitmap in memory just for display
                                         croppedBitmap = newBitmap
+                                        scannedPageUris = allPages // Update list state
+
+                                        if (pageHasBeenAdded && currentPageIndex != newIndex) {
+                                            currentPageIndex = newIndex
+                                        }
                                         isLoading = false
                                     }
                                 }
@@ -232,17 +274,34 @@ fun ScannedDocumentEditScreen(
                         horizontalArrangement = Arrangement.SpaceEvenly,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        IconButton(onClick = {
-                            navController.navigate(Routes.CAMERA)
-                        }) {
+                        IconButton(onClick = { navController.navigate(Routes.CAMERA) }) {
                             Icon(Icons.Default.Add, contentDescription = "Add Page", tint = MaterialTheme.colorScheme.onPrimary)
                         }
 
+                        // --- PREVIOUS BUTTON (Updated to load Bitmap) ---
                         IconButton(
                             onClick = {
                                 if (currentPageIndex > 0) {
-                                    currentPageIndex--
-                                    croppedBitmap = DocumentRepository.getPage(currentPageIndex)
+                                    isLoading = true
+                                    scope.launch(Dispatchers.IO) {
+                                        currentPageIndex--
+                                        val uri = DocumentRepository.getPage(currentPageIndex)
+                                        if (uri != null) {
+                                            // Load the bitmap for display
+                                            val bmp = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                                                val src = ImageDecoder.createSource(context.contentResolver, uri)
+                                                ImageDecoder.decodeBitmap(src) { d, _, _ -> d.isMutableRequired = true }
+                                            } else {
+                                                MediaStore.Images.Media.getBitmap(context.contentResolver, uri)
+                                            }
+                                            withContext(Dispatchers.Main) {
+                                                croppedBitmap = bmp
+                                                isLoading = false
+                                            }
+                                        } else {
+                                            isLoading = false
+                                        }
+                                    }
                                 }
                             },
                             enabled = currentPageIndex > 0
@@ -250,22 +309,44 @@ fun ScannedDocumentEditScreen(
                             Icon(Icons.Default.NavigateBefore, contentDescription = "Previous Page", tint = MaterialTheme.colorScheme.onPrimary)
                         }
 
+                        // --- NEXT BUTTON (Updated to load Bitmap) ---
                         IconButton(
                             onClick = {
-                                if (currentPageIndex < scannedPageBitmaps.size - 1) {
-                                    currentPageIndex++
-                                    croppedBitmap = DocumentRepository.getPage(currentPageIndex)
+                                if (currentPageIndex < scannedPageUris.size - 1) {
+                                    isLoading = true
+                                    scope.launch(Dispatchers.IO) {
+                                        currentPageIndex++
+                                        val uri = DocumentRepository.getPage(currentPageIndex)
+                                        if (uri != null) {
+                                            // Load the bitmap for display
+                                            val bmp = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                                                val src = ImageDecoder.createSource(context.contentResolver, uri)
+                                                ImageDecoder.decodeBitmap(src) { d, _, _ -> d.isMutableRequired = true }
+                                            } else {
+                                                MediaStore.Images.Media.getBitmap(context.contentResolver, uri)
+                                            }
+                                            withContext(Dispatchers.Main) {
+                                                croppedBitmap = bmp
+                                                isLoading = false
+                                            }
+                                        } else {
+                                            isLoading = false
+                                        }
+                                    }
                                 }
                             },
-                            enabled = currentPageIndex < scannedPageBitmaps.size - 1
+                            enabled = currentPageIndex < scannedPageUris.size - 1
                         ) {
                             Icon(Icons.Default.NavigateNext, contentDescription = "Next Page", tint = MaterialTheme.colorScheme.onPrimary)
                         }
 
-
+                        // --- PDF SAVE BUTTON ---
                         IconButton(onClick = {
-                            if (scannedPageBitmaps.isNotEmpty()) {
+                            android.util.Log.e("GroundZero", "1. PDF Icon Clicked!")
+                            if (scannedPageUris.isNotEmpty()) { // Updated check
                                 showPdfDialog = true
+                            } else {
+                                android.util.Log.e("GroundZero", "2. ERROR: Page list is empty!")
                             }
                         }) {
                             Icon(Icons.Default.PictureAsPdf, contentDescription = "Generate PDF", tint = MaterialTheme.colorScheme.onPrimary)
@@ -290,9 +371,18 @@ fun ScannedDocumentEditScreen(
                     contentDescription = "Final Cropped Document",
                     modifier = Modifier
                         .fillMaxSize()
-                        .clickable {
-                            croppedBitmap = null
-                        }
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null, // No ripple
+                            onClick = {
+                                // Optional: Tap to re-edit.
+                                // Note: To fully implement re-edit from a saved file,
+                                // you'd need to reload original + corners, which is complex.
+                                // For now, clicking just clears the view (back to crop mode IF original is set)
+                                // But typically "croppedBitmap = null" returns to the crop view of the *current* original.
+                                croppedBitmap = null
+                            }
+                        )
                 )
             } else if (originalBitmap != null) {
                 AdjustableCropView(
@@ -305,6 +395,7 @@ fun ScannedDocumentEditScreen(
     }
 }
 
+// --- Dialog Composable ---
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SavePdfDialog(
@@ -329,7 +420,10 @@ private fun SavePdfDialog(
         },
         confirmButton = {
             Button(
-                onClick = { if (text.isNotBlank()) onSave(text) },
+                onClick = {
+                    android.util.Log.e("SaveDebug", "0. INSIDE DIALOG: Save Button Clicked! Text: '$text'")
+                    if (text.isNotBlank()) onSave(text)
+                },
                 enabled = text.isNotBlank()
             ) {
                 Text("Save")
@@ -343,6 +437,7 @@ private fun SavePdfDialog(
     )
 }
 
+// --- AdjustableCropView Composables ---
 @Composable
 fun AdjustableCropView(
     bitmap: ImageBitmap,

@@ -55,7 +55,7 @@ import saaicom.tcb.docuscanner.models.FileItem
 import saaicom.tcb.docuscanner.ui.components.DeleteConfirmationDialog
 import saaicom.tcb.docuscanner.ui.components.SelectFileDialog
 import saaicom.tcb.docuscanner.utils.calculateInSampleSize
-import saaicom.tcb.docuscanner.utils.loadLocalFiles
+import saaicom.tcb.docuscanner.utils.FileUtils.loadLocalFiles
 import saaicom.tcb.docuscanner.utils.rotateBitmap
 import java.io.File
 import java.net.URLEncoder
@@ -65,6 +65,9 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.combinedClickable
 import kotlin.math.min
 import androidx.compose.foundation.LocalIndication
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.RotateLeft
+import androidx.compose.material.icons.automirrored.filled.RotateRight
 
 // DATA CLASS TO HOLD PATH AND ITS STYLE
 private data class StyledPath(
@@ -520,7 +523,7 @@ private fun SignatureCanvas(
                 title = { Text("Create New Signature") },
                 navigationIcon = {
                     IconButton(onClick = onCancel) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
                 actions = {
@@ -542,12 +545,12 @@ private fun SignatureCanvas(
 
                     // 3. Rotate Left
                     IconButton(onClick = { rotation = (rotation - 90f) % 360 }) {
-                        Icon(Icons.Default.RotateLeft, contentDescription = "Rotate Left")
+                        Icon(Icons.AutoMirrored.Filled.RotateLeft, contentDescription = "Rotate Left")
                     }
 
                     // 4. Rotate Right
                     IconButton(onClick = { rotation = (rotation + 90f) % 360 }) {
-                        Icon(Icons.Default.RotateRight, contentDescription = "Rotate Right")
+                        Icon(Icons.AutoMirrored.Filled.RotateRight, contentDescription = "Rotate Right")
                     }
 
                     // 5. Save Button

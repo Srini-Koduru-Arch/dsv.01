@@ -94,19 +94,28 @@ class MainActivity : ComponentActivity() {
     private val requestStoragePermissionsLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
+
+        // Check for read permission (all versions)
         val readImagesGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissions[Manifest.permission.READ_MEDIA_IMAGES] ?: false
         } else {
-            false
+            permissions[Manifest.permission.READ_EXTERNAL_STORAGE] ?: false
         }
-        val readExternalGranted = permissions[Manifest.permission.READ_EXTERNAL_STORAGE] ?: false
 
-        _hasStoragePermission.value = readImagesGranted || readExternalGranted
+        // Check for write permission (only needed for API < 29)
+        val writeExternalGranted = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            permissions[Manifest.permission.WRITE_EXTERNAL_STORAGE] ?: false
+        } else {
+            true // Not needed on API 29+ (Scoped Storage), so treat as "granted"
+        }
+
+        // *** FIX: Must have both permissions ***
+        _hasStoragePermission.value = readImagesGranted && writeExternalGranted
 
         if (_hasStoragePermission.value) {
-            Log.d("MainActivity", "Storage permissions granted. ✅")
+            Log.d("MainActivity", "All necessary storage permissions granted. ✅")
         } else {
-            Log.w("MainActivity", "Storage permissions denied. ❌")
+            Log.w("MainActivity", "Storage permissions denied. Read: $readImagesGranted, Write: $writeExternalGranted ❌")
         }
     }
 
@@ -155,14 +164,29 @@ class MainActivity : ComponentActivity() {
 
     private fun requestStoragePermissions() {
         val permissionsToRequest = mutableListOf<String>()
+        var readGranted = false
+        // Default to true (not needed on new phones)
+        var writeGranted = true
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES) != PackageManager.PERMISSION_GRANTED) {
+            // Android 13+
+            readGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED
+            if (!readGranted) {
                 permissionsToRequest.add(Manifest.permission.READ_MEDIA_IMAGES)
             }
         } else {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            // Android 12 and below
+            readGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+            if (!readGranted) {
                 permissionsToRequest.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+            }
+
+            // *** FIX: Add WRITE_EXTERNAL_STORAGE for Android 9 (API 28) and below ***
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                writeGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+                if (!writeGranted) {
+                    permissionsToRequest.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                }
             }
         }
 
@@ -170,7 +194,7 @@ class MainActivity : ComponentActivity() {
             Log.i("MainActivity", "Requesting storage permissions: $permissionsToRequest 🚦")
             requestStoragePermissionsLauncher.launch(permissionsToRequest.toTypedArray())
         } else {
-            _hasStoragePermission.value = true
+            _hasStoragePermission.value = readGranted && writeGranted
             Log.d("MainActivity", "All necessary storage permissions already granted. ✅")
         }
     }
@@ -293,17 +317,25 @@ fun DocuScannerApp(requestCameraPermission: () -> Unit, hasStoragePermission: Bo
             composable(Routes.PROFILE) { ProfileScreen() }
 
             composable(
-                route = Routes.EDIT_DOCUMENT,
+                route = Routes.EDIT_DOCUMENT + "?corners={corners}",
                 arguments = listOf(
-                    navArgument("imageUri") { type = NavType.StringType }
+                    navArgument("imageUri") { type = NavType.StringType },
+                    // 2. Define the new 'corners' argument
+                    navArgument("corners") {
+                        type = NavType.StringType
+                        nullable = true
+                        defaultValue = "null" // Default to "null" if not provided
+                    }
                 )
             ) { backStackEntry ->
                 val imageUriString = backStackEntry.arguments?.getString("imageUri")
+                val cornersJson = backStackEntry.arguments?.getString("corners")
                 val imageUri = imageUriString?.let { Uri.parse(it) }
                 imageUri?.let {
                     ScannedDocumentEditScreen(
                         navController = navController,
                         imageUri = it,
+                        cornersJson = if (cornersJson == "null") null else cornersJson
                     )
                 }
             }

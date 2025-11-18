@@ -25,7 +25,7 @@ import androidx.navigation.NavController
 import saaicom.tcb.docuscanner.FileActions
 import saaicom.tcb.docuscanner.Routes
 import saaicom.tcb.docuscanner.models.FileItem
-import saaicom.tcb.docuscanner.utils.formatFileSize
+import saaicom.tcb.docuscanner.utils.FileUtils.formatFileSize
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 

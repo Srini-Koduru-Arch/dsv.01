@@ -25,7 +25,7 @@ import saaicom.tcb.docuscanner.FileActions
 import saaicom.tcb.docuscanner.models.FileItem
 import saaicom.tcb.docuscanner.ui.components.DeleteConfirmationDialog
 import saaicom.tcb.docuscanner.ui.components.LocalFileRow
-import saaicom.tcb.docuscanner.utils.loadLocalFiles
+import saaicom.tcb.docuscanner.utils.FileUtils.loadLocalFiles
 import kotlinx.coroutines.delay
 import saaicom.tcb.docuscanner.Routes
 import saaicom.tcb.docuscanner.ui.components.RenameFileDialog

@@ -17,6 +17,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -34,7 +35,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.geometry.Size // *** ADDED: Import ***
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
@@ -57,12 +58,10 @@ import kotlinx.coroutines.withContext
 import saaicom.tcb.docuscanner.FileActions
 import saaicom.tcb.docuscanner.Routes
 import saaicom.tcb.docuscanner.SignatureRepository
-import saaicom.tcb.docuscanner.utils.calculateInSampleSize
+import saaicom.tcb.docuscanner.utils.FileUtils
+import saaicom.tcb.docuscanner.utils.calculateInSampleSize // Ensure BitmapUtils.kt still exists, or move this function
 import java.io.File
 import kotlin.math.min
-import androidx.compose.foundation.LocalIndication
-import androidx.compose.runtime.remember
-import androidx.compose.foundation.interaction.MutableInteractionSource
 
 /**
  * A data class to hold the state of a placed signature on the document.
@@ -120,7 +119,6 @@ fun PdfSignScreen(
     var showSaveDialog by remember { mutableStateOf(false) }
 
     // --- START: Helper Functions ---
-    // Moved inside the composable to access state variables
 
     fun getPageTransformations(pdfPageSize: IntSize, composableSize: IntSize): Triple<Float, Float, Float> {
         if (pdfPageSize.width == 0 || composableSize.width == 0) {
@@ -172,14 +170,12 @@ fun PdfSignScreen(
                 matrix.postRotate(sig.rotation, sigWidth / 2, sigHeight / 2)
 
                 // 2. Map the signature's composable-space offset back to bitmap-space
-
                 val sigCenterInComposable = Offset(
                     composableSize.width / 2f + sig.offset.x,
                     composableSize.height / 2f + sig.offset.y
                 )
 
                 val sigCenterOnScreen = (sigCenterInComposable * pageScale) + pageOffset
-
                 val sigCenterOnScaledImage = sigCenterOnScreen - Offset(offsetX * pageScale, offsetY * pageScale)
 
                 val bitmapX = sigCenterOnScaledImage.x / (scaleToFit * pageScale)
@@ -343,7 +339,6 @@ fun PdfSignScreen(
             isLoading = true
             pageScale = 1f
             pageOffset = Offset.Zero
-            // Don't clear signatures, they are global now
 
             withContext(Dispatchers.IO) {
                 val page = it.openPage(currentPage)
@@ -387,11 +382,12 @@ fun PdfSignScreen(
                 showSaveDialog = false
                 isLoading = true
                 scope.launch {
-                    // --- *** NEW SAVE LOGIC (Requirement 4) *** ---
-                    val finalBitmaps = mutableListOf<Bitmap>()
+                    // --- *** FIXED SAVE LOGIC *** ---
+                    // Instead of List<Bitmap>, we now collect List<Uri> (temp files)
+                    val tempUris = mutableListOf<Uri>()
+
                     withContext(Dispatchers.IO) {
                         if (pdfRenderer == null) {
-                            // Handle error
                             Log.e("PdfSignScreen", "Save failed: PdfRenderer is null")
                             return@withContext
                         }
@@ -411,36 +407,37 @@ fun PdfSignScreen(
                                 baseBitmap = baseBitmap.asImageBitmap(),
                                 signatures = sigsForThisPage,
                                 pdfPageSize = pdfPageSize,
-                                composableSize = composableSize, // This is still the size of the *current* page composable
-                                pageScale = 1f, // When saving, we use the original 1x scale
-                                pageOffset = Offset.Zero // And no offset
+                                composableSize = composableSize,
+                                pageScale = 1f,
+                                pageOffset = Offset.Zero
                             )
 
-                            if (finalBitmap != null) {
-                                finalBitmaps.add(finalBitmap)
-                            } else {
-                                finalBitmaps.add(baseBitmap) // Add original if flatten fails
-                            }
+                            // 4. Save to Temp File immediately
+                            val bitmapToSave = finalBitmap ?: baseBitmap
+                            val uri = FileUtils.saveBitmapToTempFile(context, bitmapToSave)
+                            tempUris.add(uri)
+
+                            // 5. Recycle immediately to free memory
+                            if (finalBitmap != null) finalBitmap.recycle()
+                            baseBitmap.recycle()
                         }
                     }
 
-                    // 4. Save the new PDF
+                    // 4. Pass URIs to FileActions
                     FileActions.saveBitmapsAsPdf(
-                        bitmaps = finalBitmaps,
+                        uris = tempUris, // <--- PASSING URIS NOW
                         fileName = fileName,
                         context = context,
                         onComplete = { success ->
                             isLoading = false
                             if (success) {
                                 Toast.makeText(context, "Signed PDF saved!", Toast.LENGTH_LONG).show()
-                                finalBitmaps.forEach { it.recycle() } // Clean up memory
                                 navController.navigate(Routes.FILES) {
                                     popUpTo(Routes.HOME)
                                     launchSingleTop = true
                                 }
                             } else {
                                 Toast.makeText(context, "Failed to save PDF", Toast.LENGTH_SHORT).show()
-                                finalBitmaps.forEach { it.recycle() }
                             }
                         }
                     )
@@ -448,7 +445,6 @@ fun PdfSignScreen(
             }
         )
     }
-
 
     Scaffold(
         topBar = {
@@ -460,7 +456,6 @@ fun PdfSignScreen(
                     }
                 },
                 actions = {
-                    // *** ADDED: Delete button for selected signature ***
                     if (selectedSignatureId != null) {
                         IconButton(onClick = {
                             allPlacedSignatures.removeAll { it.id == selectedSignatureId }
@@ -470,10 +465,9 @@ fun PdfSignScreen(
                         }
                     }
                     IconButton(
-                        onClick = {
-                            showSaveDialog = true
-                        },
-                        enabled = allPlacedSignatures.isNotEmpty()
+                        onClick = { showSaveDialog = true },
+                        // Enable save if we have loaded the PDF (don't require a signature to save)
+                        enabled = pageCount > 0
                     ) {
                         Icon(Icons.Default.Check, contentDescription = "Save Document")
                     }
@@ -627,13 +621,12 @@ fun PdfSignScreen(
                                     drawImage(sig.bitmap)
 
                                     if (sig.id == selectedSignatureId) {
-                                        // *** FIX: Create Size object on a separate line ***
                                         val borderSize = Size(sigWidth, sigHeight)
                                         val (scaleToFit, _, _) = getPageTransformations(pdfPageSize, composableSize)
                                         drawRect(
                                             color = Color.Blue,
                                             topLeft = Offset.Zero,
-                                            size = borderSize, // Pass the variable
+                                            size = borderSize,
                                             style = Stroke(width = 8f / (sig.scale * pageScale * scaleToFit))
                                         )
                                     }
