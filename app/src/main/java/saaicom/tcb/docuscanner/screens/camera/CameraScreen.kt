@@ -53,10 +53,10 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.navigation.NavController
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import org.opencv.core.Core
 import org.opencv.core.Point
 import org.opencv.core.Mat
 import org.opencv.android.Utils
+import org.opencv.core.Core
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -65,6 +65,7 @@ import java.util.concurrent.Executors
 import android.graphics.Bitmap
 import android.graphics.YuvImage
 import android.graphics.Rect
+import org.opencv.core.MatOfPoint
 
 import java.io.ByteArrayOutputStream
 
@@ -106,7 +107,12 @@ fun CameraScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
-    val imageCapture = remember { ImageCapture.Builder().build() }
+    val imageCapture = remember {
+        ImageCapture.Builder()
+            // This forces the final photo to have the same 16:9 shape as the preview
+            .setTargetAspectRatio(androidx.camera.core.AspectRatio.RATIO_16_9)
+            .build()
+    }
     val coroutineScope = rememberCoroutineScope()
 
     // State to hold the detected corners (in ImageAnalysis resolution, 720x1280)
@@ -231,6 +237,7 @@ private fun bindCameraUseCases(
 }
 
 // Custom Analyzer class to run OpenCV edge detection
+
 private class DocumentEdgeAnalyzer(
     private val onCornersDetected: (List<Point>) -> Unit
 ) : ImageAnalysis.Analyzer {
@@ -238,6 +245,7 @@ private class DocumentEdgeAnalyzer(
     private var lastRunTime = 0L
     private val frameSkipInterval = 200 // every 200ms
 
+    @androidx.annotation.OptIn(androidx.camera.core.ExperimentalGetImage::class)
     override fun analyze(imageProxy: ImageProxy) {
         val currentTime = System.currentTimeMillis()
         if (currentTime - lastRunTime < frameSkipInterval) {
@@ -245,21 +253,31 @@ private class DocumentEdgeAnalyzer(
             return
         }
 
+        var contour: MatOfPoint? = null
+
         try {
             val bitmap = imageProxy.toBitmap()
             if (bitmap != null) {
                 val mat = Mat()
-                Utils.bitmapToMat(bitmap, mat)
+                Utils.bitmapToMat(bitmap, mat) // This mat is 1280x720 (Landscape)
 
-                // ✅ Rotate to match PreviewView (portrait mode)
-                //Core.rotate(mat, mat, Core.ROTATE_90_CLOCKWISE)
+                // =======================================================
+                // ===      THE ROTATION FIX (Part 1)                  ===
+                // =======================================================
+                // Rotate the Mat 90 degrees clockwise to match the UI
+                Core.rotate(mat, mat, Core.ROTATE_90_CLOCKWISE)
+                // This mat is now 720x1280 (Portrait)
+                // =======================================================
 
-                // (Optional) Flip horizontally if you’re using the front camera
-                // Core.flip(mat, mat, 1)
+                contour = DocumentDetector.detectLargestDocument(mat)
 
-                val contour = DocumentDetector.detectLargestDocument(mat)
                 if (contour != null && contour.toArray().size == 4) {
-                    onCornersDetected(contour.toArray().toList())
+                    val points = contour.toArray().toList()
+                    Log.d(
+                        "DocumentEdgeAnalyzer",
+                        "Detected 4 corners at: [${points[0]}], [${points[1]}], [${points[2]}], [${points[3]}]"
+                    )
+                    onCornersDetected(points)
                 }
 
                 mat.release()
@@ -267,6 +285,7 @@ private class DocumentEdgeAnalyzer(
         } catch (e: Exception) {
             Log.e("DocumentEdgeAnalyzer", "OpenCV processing failed", e)
         } finally {
+            contour?.release()
             imageProxy.close()
             lastRunTime = currentTime
         }
@@ -291,10 +310,10 @@ private fun DrawEdgeOverlay(detectedCorners: List<Point>?) {
             val canvasSize = size
             if (canvasSize.width == 0f || canvasSize.height == 0f) return@Canvas
 
-            // The analysis target resolution. OpenCV points are in this space.
+            // The analysis target resolution. Points are NOW in this space.
             val analysisWidth = 720f
             val analysisHeight = 1280f
-            val analysisAspectRatio = analysisWidth / analysisHeight // 0.5625
+            val analysisAspectRatio = analysisWidth / analysisHeight
 
             val viewAspectRatio = canvasSize.width / canvasSize.height
 
@@ -307,12 +326,10 @@ private fun DrawEdgeOverlay(detectedCorners: List<Point>?) {
             val imageHeight = analysisHeight
 
             if (viewAspectRatio > analysisAspectRatio) {
-                // View is wider than image: Scale height to match, center horizontally
                 scale = canvasSize.height / imageHeight
                 dx = (canvasSize.width - imageWidth * scale) / 2
                 dy = 0f
             } else {
-                // View is taller than image: Scale width to match, center vertically
                 scale = canvasSize.width / imageWidth
                 dx = 0f
                 dy = (canvasSize.height - imageHeight * scale) / 2
@@ -320,24 +337,24 @@ private fun DrawEdgeOverlay(detectedCorners: List<Point>?) {
             // --- End of CenterCrop Logic ---
 
 
-            // Map OpenCV Points to Canvas Offsets and draw the quadrilateral path
             val path = Path().apply {
                 detectedCorners.forEachIndexed { index, point ->
 
-                    // Transformation: 90-degree clockwise rotation (X, Y) -> (Y, W-X)
-                    // This is the most common fix for the PreviewView/ImageAnalysis coordinate mismatch
-                    val rotatedX = point.y.toFloat()
-                    val rotatedY = analysisWidth - point.x.toFloat()
+                    // =======================================================
+                    // ===      THE ROTATION FIX (Part 2)                  ===
+                    // =======================================================
+                    // The points are now in the correct 720x1280 space.
+                    // Map x to x and y to y.
+                    val x = (point.x.toFloat() * scale) + dx
+                    val y = (point.y.toFloat() * scale) + dy
+                    // =======================================================
 
-                    val x = (rotatedX * scale) + dx
-                    val y = (rotatedY * scale) + dy
                     val cornerOffset = Offset(x, y)
 
                     if (index == 0) moveTo(x, y) else lineTo(x, y)
 
-                    // Draw corner circles
                     drawCircle(
-                        color = Color.Yellow,
+                        color = Color.Green,
                         radius = with(density) { 8.dp.toPx() },
                         center = cornerOffset
                     )
@@ -345,10 +362,9 @@ private fun DrawEdgeOverlay(detectedCorners: List<Point>?) {
                 close()
             }
 
-            // Draw the border path
             drawPath(
                 path = path,
-                color = Color.Yellow,
+                color = Color.Green,
                 style = Stroke(width = with(density) { 3.dp.toPx() })
             )
         }
