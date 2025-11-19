@@ -6,6 +6,7 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
 import android.widget.Toast
@@ -39,13 +40,55 @@ object FileUtils {
      * Loads all local PDF files from the app's designated Downloads folder.
      * Can be filtered by name.
      */
+    /**
+     * Loads local PDF files.
+     * PRIORITIZES direct file access (reliable) over MediaStore (unreliable for re-installs).
+     */
     suspend fun loadLocalFiles(context: Context, nameFilter: String? = null): List<FileItem> = withContext(Dispatchers.IO) {
         val files = mutableListOf<FileItem>()
+
+        // 1. Try Direct File Access (Best for Android 11+ with All Files Access)
+        try {
+            val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val appDir = File(downloadsDir, "DocuScanner")
+
+            if (appDir.exists() && appDir.isDirectory) {
+                val rawFiles = appDir.listFiles { file ->
+                    val nameMatches = nameFilter.isNullOrBlank() || file.name.contains(nameFilter, ignoreCase = true)
+                    val isPdf = file.name.endsWith(".pdf", ignoreCase = true)
+                    nameMatches && isPdf
+                }
+
+                rawFiles?.forEach { file ->
+                    // FIXED: Used positional arguments to avoid naming errors
+                    // FIXED: Used Uri.fromFile(file) instead of toUri()
+                    files.add(FileItem(
+                        file.name,         // Name
+                        file.length(),     // Size (bytes)
+                        Uri.fromFile(file) // Uri
+                    ))
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("FileUtils", "Direct file load failed, falling back to MediaStore", e)
+        }
+
+        // 2. If Direct Access found files, return them.
+        if (files.isNotEmpty()) {
+            // Sort by date (modified) descending
+            return@withContext files.sortedByDescending {
+                File(it.uri.path ?: "").lastModified()
+            }
+        }
+
+        // --- Fallback: Old MediaStore Logic (Mainly for Android < 10) ---
+        Log.d("FileUtils", "Using MediaStore fallback.")
+
         val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL)
         } else {
             MediaStore.Files.getContentUri("external")
-        } //
+        }
 
         val selectionClauses = mutableListOf(
             "${MediaStore.Files.FileColumns.MIME_TYPE} = ?",
@@ -54,16 +97,16 @@ object FileUtils {
         val selectionArgsList = mutableListOf(
             "application/pdf",
             "%Download/DocuScanner%"
-        ) //
+        )
 
         if (!nameFilter.isNullOrBlank()) {
             selectionClauses.add("${MediaStore.Files.FileColumns.DISPLAY_NAME} LIKE ?")
             selectionArgsList.add("%$nameFilter%")
-        } //
+        }
 
         val selection = selectionClauses.joinToString(separator = " AND ")
         val selectionArgs = selectionArgsList.toTypedArray()
-        val sortOrder = "${MediaStore.Files.FileColumns.DATE_ADDED} DESC" //
+        val sortOrder = "${MediaStore.Files.FileColumns.DATE_ADDED} DESC"
 
         try {
             context.contentResolver.query(
@@ -86,15 +129,16 @@ object FileUtils {
                     val name = cursor.getString(nameColumn)
                     val size = cursor.getLong(sizeColumn)
                     val contentUri: Uri = ContentUris.withAppendedId(collection, id)
+
+                    // Use positional arguments here as well
                     files.add(FileItem(name, size, contentUri))
                 }
             }
-            Log.d("FileUtils", "Found ${files.size} local PDF files matching filter.")
         } catch (e: Exception) {
             Log.e("FileUtils", "Error querying MediaStore", e)
         }
         return@withContext files
-    } //
+    }
 
     /**
      * Opens a PDF file using an external viewer app.

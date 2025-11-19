@@ -422,9 +422,10 @@ fun TermsAndConditionsScreen(onAccept: () -> Unit) {
         Spacer(modifier = Modifier.height(16.dp))
         Text(
             "Welcome to DocuScanner! This is a free-to-use application provided by Saaicom. " +
-                    "By using this app, you agree that Saaicom holds no liability for any data loss or issues that may arise from its use. " +
+                    "By using this app, you agree that Saaicom holds no liability for any data loss or any issues that may arise from this app's use." + "" +
+                    "We do not collect any personal information from you. This app is not connected to our data servers and does not store any data. " +
                     "This app displays advertisements to support its development and maintenance. " +
-                    "Please indicate your acceptance to continue.",
+                    "If you change your acceptance, please uninstall this app.",
             style = MaterialTheme.typography.bodyLarge
         )
         Spacer(modifier = Modifier.height(24.dp))

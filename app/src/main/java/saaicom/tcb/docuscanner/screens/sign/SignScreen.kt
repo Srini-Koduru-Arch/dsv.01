@@ -23,6 +23,9 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.RotateLeft
+import androidx.compose.material.icons.automirrored.filled.RotateRight
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -65,9 +68,6 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.combinedClickable
 import kotlin.math.min
 import androidx.compose.foundation.LocalIndication
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.RotateLeft
-import androidx.compose.material.icons.automirrored.filled.RotateRight
 
 // DATA CLASS TO HOLD PATH AND ITS STYLE
 private data class StyledPath(
@@ -153,13 +153,35 @@ fun SignScreen(
         SignatureCanvas(
             onSave = { bitmap, fileName ->
                 scope.launch {
-                    SignatureRepository.saveSignature(context, bitmap, fileName)
-                    isDrawing = false // This triggers the LaunchedEffect
+                    // <<< FIX: Robust File System Check >>>
+                    // 1. Get the actual directory
+                    val sigDir = File(context.filesDir, "signatures")
+                    if (!sigDir.exists()) {
+                        sigDir.mkdirs()
+                    }
+
+                    // 2. Prepare the name
+                    val nameWithoutExt = fileName.removeSuffix(".png")
+                    var finalName = "$nameWithoutExt.png"
+                    var fileCandidate = File(sigDir, finalName)
+                    var counter = 1
+
+                    // 3. Check existence directly against the filesystem
+                    while (fileCandidate.exists()) {
+                        finalName = "$nameWithoutExt ($counter).png"
+                        fileCandidate = File(sigDir, finalName)
+                        counter++
+                    }
+
+                    // 4. Save using the guaranteed unique name
+                    SignatureRepository.saveSignature(context, bitmap, finalName)
+
+                    isDrawing = false
                     loadSignatures()
                 }
             },
             onCancel = {
-                isDrawing = false // This triggers the LaunchedEffect
+                isDrawing = false
             }
         )
     } else {
@@ -523,6 +545,7 @@ private fun SignatureCanvas(
                 title = { Text("Create New Signature") },
                 navigationIcon = {
                     IconButton(onClick = onCancel) {
+                        // AutoMirrored ArrowBack
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
@@ -545,11 +568,13 @@ private fun SignatureCanvas(
 
                     // 3. Rotate Left
                     IconButton(onClick = { rotation = (rotation - 90f) % 360 }) {
+                        // AutoMirrored RotateLeft
                         Icon(Icons.AutoMirrored.Filled.RotateLeft, contentDescription = "Rotate Left")
                     }
 
                     // 4. Rotate Right
                     IconButton(onClick = { rotation = (rotation + 90f) % 360 }) {
+                        // AutoMirrored RotateRight
                         Icon(Icons.AutoMirrored.Filled.RotateRight, contentDescription = "Rotate Right")
                     }
 
@@ -688,13 +713,11 @@ private fun SignatureStyleDialog(
                                     color = if (selectedColor == color) MaterialTheme.colorScheme.onSurface else Color.Transparent,
                                     shape = CircleShape
                                 )
-                                // <<< THIS IS THE FIX >>>
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = LocalIndication.current,
                                     onClick = { selectedColor = color }
                                 )
-                            // <<< ^^^ END OF FIX ^^^ >>>
                         )
                     }
                 }
@@ -703,10 +726,10 @@ private fun SignatureStyleDialog(
                 Slider(
                     value = selectedWidth,
                     onValueChange = { selectedWidth = it },
-                    valueRange = 7f..21f,
+                    valueRange = 4f..20f,
                     steps = 7
                 )
-                Text("Width: ${selectedWidth.toInt()}", modifier = Modifier.align(Alignment.End))
+                Text("Width: ${selectedWidth.toInt()}f", modifier = Modifier.align(Alignment.End))
             }
         },
         confirmButton = {
@@ -762,51 +785,77 @@ private fun SaveSignatureDialog(
 }
 
 /**
- * Captures the signature canvas as a bitmap.
- * THIS FUNCTION IS NOW UPDATED to handle StyledPath
+ * Captures the signature canvas, crops it to the content bounds (removing padding),
+ * and saves it at high resolution.
  */
 private suspend fun captureSignature(size: IntSize, paths: List<StyledPath>): Bitmap = withContext(Dispatchers.IO) {
-    val originalBitmap = Bitmap.createBitmap(size.width, size.height, Bitmap.Config.ARGB_8888)
-    val canvas = android.graphics.Canvas(originalBitmap)
+    // 1. Calculate the bounding box of all paths combined
+    var minX = Float.MAX_VALUE
+    var maxX = Float.MIN_VALUE
+    var minY = Float.MAX_VALUE
+    var maxY = Float.MIN_VALUE
+
+    if (paths.isEmpty()) {
+        // Fallback if nothing is drawn
+        return@withContext Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
+    }
+
+    paths.forEach { (path, _, width) ->
+        val pathBounds = RectF()
+        // Convert Compose Path to Android Path to use computeBounds
+        path.asAndroidPath().computeBounds(pathBounds, true)
+
+        // Expand bounds by half the stroke width to ensure the full thick line is captured
+        val halfWidth = width / 2f
+
+        if (pathBounds.left - halfWidth < minX) minX = pathBounds.left - halfWidth
+        if (pathBounds.right + halfWidth > maxX) maxX = pathBounds.right + halfWidth
+        if (pathBounds.top - halfWidth < minY) minY = pathBounds.top - halfWidth
+        if (pathBounds.bottom + halfWidth > maxY) maxY = pathBounds.bottom + halfWidth
+    }
+
+    // Add a tiny padding (e.g., 4 pixels) just so lines don't touch the absolute edge
+    val padding = 4f
+    minX -= padding
+    minY -= padding
+    maxX += padding
+    maxY += padding
+
+    // Ensure bounds are within the original canvas size (clamping)
+    minX = minX.coerceAtLeast(0f)
+    minY = minY.coerceAtLeast(0f)
+    maxX = maxX.coerceAtMost(size.width.toFloat())
+    maxY = maxY.coerceAtMost(size.height.toFloat())
+
+    // Calculate final width and height
+    val finalWidth = (maxX - minX).toInt().coerceAtLeast(1)
+    val finalHeight = (maxY - minY).toInt().coerceAtLeast(1)
+
+    // 2. Create the bitmap with the EXACT size of the signature (No Downscaling)
+    val croppedBitmap = Bitmap.createBitmap(finalWidth, finalHeight, Bitmap.Config.ARGB_8888)
+    val canvas = android.graphics.Canvas(croppedBitmap)
     canvas.drawColor(android.graphics.Color.TRANSPARENT, PorterDuff.Mode.SRC)
 
-    // Use a single Paint object and reconfigure it for each path
+    // 3. Translate the canvas so the signature is drawn at (0,0) of our new bitmap
+    canvas.translate(-minX, -minY)
+
+    // 4. Draw the paths
     val paint = android.graphics.Paint().apply {
         style = android.graphics.Paint.Style.STROKE
         strokeCap = android.graphics.Paint.Cap.ROUND
         strokeJoin = android.graphics.Paint.Join.ROUND
         isAntiAlias = true
+        isDither = true
+        isFilterBitmap = true
     }
 
     paths.forEach { (path, color, width) ->
-        paint.color = color.toArgb() // Convert Compose Color to Android Color
+        paint.color = color.toArgb()
         paint.strokeWidth = width
         canvas.drawPath(path.asAndroidPath(), paint)
     }
 
-    // --- Scaling logic remains the same ---
-    val targetWidth = 210
-    val targetHeight = 149
-    val finalBitmap = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
-    finalBitmap.eraseColor(android.graphics.Color.TRANSPARENT)
-    val finalCanvas = android.graphics.Canvas(finalBitmap)
-
-    // <<< HERE IS THE FIX >>>
-    val aspectScale = min(
-        targetWidth.toFloat() / originalBitmap.width,
-        targetHeight.toFloat() / originalBitmap.height // Corrected 'originalDimen.width' to 'originalBitmap.height'
-    )
-    // <<< END OF FIX >>>
-
-    val scaledWidth = (originalBitmap.width * aspectScale).toInt()
-    val scaledHeight = (originalBitmap.height * aspectScale).toInt()
-    val left = (targetWidth - scaledWidth) / 2f
-    val top = (targetHeight - scaledHeight) / 2f
-    val destRect = RectF(left, top, left + scaledWidth, top + scaledHeight)
-    finalCanvas.drawBitmap(originalBitmap, null, destRect, null)
-    originalBitmap.recycle()
-
-    return@withContext finalBitmap
+    return@withContext croppedBitmap
 }
 
 // Helper function to convert Compose Color to Android's integer color

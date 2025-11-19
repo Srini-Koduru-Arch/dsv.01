@@ -1,83 +1,92 @@
 package saaicom.tcb.docuscanner.screens.sign
 
+import android.content.ContentValues
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Matrix
+import android.graphics.pdf.PdfDocument
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
 import android.os.ParcelFileDescriptor
+import android.provider.MediaStore
 import android.util.Log
 import android.widget.Toast
-import androidx.compose.foundation.Canvas
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.NavigateBefore
-import androidx.compose.material.icons.automirrored.filled.NavigateNext
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.toIntSize
+import androidx.compose.ui.zIndex
 import androidx.navigation.NavController
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import saaicom.tcb.docuscanner.FileActions
 import saaicom.tcb.docuscanner.Routes
 import saaicom.tcb.docuscanner.SignatureRepository
 import saaicom.tcb.docuscanner.utils.FileUtils
-import saaicom.tcb.docuscanner.utils.calculateInSampleSize // Ensure BitmapUtils.kt still exists, or move this function
 import java.io.File
-import kotlin.math.min
+import java.io.FileOutputStream
+import java.io.OutputStream
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
-/**
- * A data class to hold the state of a placed signature on the document.
- */
-private data class PlacedSignature(
+// --- DATA MODEL ---
+data class PlacedSignature(
     val id: Long = System.currentTimeMillis(),
     val bitmap: ImageBitmap,
     val pageIndex: Int,
-    var offset: Offset, // Offset from the (0,0) of the PDF page
-    var scale: Float = 1f,
-    var rotation: Float = 0f
+    val x: Float,
+    val y: Float,
+    val width: Float,
+    val height: Float,
+    val rotation: Float = 0f
 )
 
-/**
- * A screen to view a PDF and add signatures using Android's built-in PdfRenderer.
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PdfSignScreen(
@@ -86,624 +95,575 @@ fun PdfSignScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var isLoading by remember { mutableStateOf(true) }
 
-    // --- PDF Renderer State ---
+    // --- PDF State ---
     var pdfRenderer by remember { mutableStateOf<PdfRenderer?>(null) }
     var parcelFileDescriptor by remember { mutableStateOf<ParcelFileDescriptor?>(null) }
-    var currentPage by remember { mutableStateOf(0) }
     var pageCount by remember { mutableStateOf(0) }
-    var currentPageBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
-    var pdfPageSize by remember { mutableStateOf(IntSize(0, 0)) }
+    var isLoading by remember { mutableStateOf(true) }
+    val pdfMutex = remember { Mutex() }
 
-    // --- Signature Sheet State ---
+    // --- Signatures State ---
+    val allSignatures = remember { mutableStateListOf<PlacedSignature>() }
+    var selectedSignatureId by remember { mutableStateOf<Long?>(null) }
+
+    // --- UI State ---
+    val listState = rememberLazyListState()
     val sheetState = rememberModalBottomSheetState()
     var showSignatureSheet by remember { mutableStateOf(false) }
     var savedSignatures by remember { mutableStateOf<List<File>>(emptyList()) }
-
-    // --- Transformation State ---
-    val allPlacedSignatures = remember { mutableStateListOf<PlacedSignature>() }
-    val currentPageSignatures by remember(currentPage, allPlacedSignatures.size) {
-        derivedStateOf {
-            allPlacedSignatures.filter { it.pageIndex == currentPage }
-        }
-    }
-
-    var pageScale by remember { mutableStateOf(1f) }
-    var pageOffset by remember { mutableStateOf(Offset.Zero) }
-    var composableSize by remember { mutableStateOf(IntSize.Zero) }
-
-    // --- Gesture Handling State ---
-    var selectedSignatureId by remember { mutableStateOf<Long?>(null) }
-
     var showSaveDialog by remember { mutableStateOf(false) }
+    var isSaving by remember { mutableStateOf(false) }
 
-    // --- START: Helper Functions ---
+    // --- Zoom/Pan State ---
+    val scaleAnim = remember { Animatable(1f) }
+    var offsetX by remember { mutableFloatStateOf(0f) }
+    var containerSize by remember { mutableStateOf(IntSize.Zero) }
 
-    fun getPageTransformations(pdfPageSize: IntSize, composableSize: IntSize): Triple<Float, Float, Float> {
-        if (pdfPageSize.width == 0 || composableSize.width == 0) {
-            return Triple(1f, 0f, 0f)
-        }
-        val scaleToFit = min(
-            composableSize.width.toFloat() / pdfPageSize.width,
-            composableSize.height.toFloat() / pdfPageSize.height
-        )
-        val scaledImageWidth = pdfPageSize.width * scaleToFit
-        val scaledImageHeight = pdfPageSize.height * scaleToFit
-        val offsetX = (composableSize.width - scaledImageWidth) / 2f
-        val offsetY = (composableSize.height - scaledImageHeight) / 2f
-        return Triple(scaleToFit, offsetX, offsetY)
-    }
-
-    suspend fun flattenBitmap(
-        baseBitmap: ImageBitmap?,
-        signatures: List<PlacedSignature>,
-        pdfPageSize: IntSize,
-        composableSize: IntSize,
-        pageScale: Float,
-        pageOffset: Offset
-    ): Bitmap? = withContext(Dispatchers.IO) {
-        if (baseBitmap == null || composableSize.width == 0 || composableSize.height == 0) {
-            Log.e("Flatten", "Base bitmap or composable size is null/zero.")
-            return@withContext null
-        }
-
-        val finalBitmap = Bitmap.createBitmap(pdfPageSize.width, pdfPageSize.height, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(finalBitmap)
-
-        // 1. Draw the PDF page as the background
-        canvas.drawBitmap(baseBitmap.asAndroidBitmap(), 0f, 0f, null)
-
-        // 2. Calculate coordinate mapping
-        val (scaleToFit, offsetX, offsetY) = getPageTransformations(pdfPageSize, composableSize)
-
-        signatures.forEach { sig ->
-            try {
-                val sigBitmap = sig.bitmap.asAndroidBitmap()
-                val sigWidth = sigBitmap.width.toFloat()
-                val sigHeight = sigBitmap.height.toFloat()
-
-                val matrix = Matrix()
-
-                // 1. Start with the signature's own scale/rotation
-                matrix.postScale(sig.scale, sig.scale, sigWidth / 2, sigHeight / 2)
-                matrix.postRotate(sig.rotation, sigWidth / 2, sigHeight / 2)
-
-                // 2. Map the signature's composable-space offset back to bitmap-space
-                val sigCenterInComposable = Offset(
-                    composableSize.width / 2f + sig.offset.x,
-                    composableSize.height / 2f + sig.offset.y
-                )
-
-                val sigCenterOnScreen = (sigCenterInComposable * pageScale) + pageOffset
-                val sigCenterOnScaledImage = sigCenterOnScreen - Offset(offsetX * pageScale, offsetY * pageScale)
-
-                val bitmapX = sigCenterOnScaledImage.x / (scaleToFit * pageScale)
-                val bitmapY = sigCenterOnScaledImage.y / (scaleToFit * pageScale)
-
-                val scaledSigWidth = sigWidth * sig.scale
-                val scaledSigHeight = sigHeight * sig.scale
-                matrix.postTranslate(bitmapX - (scaledSigWidth / 2f), bitmapY - (scaledSigHeight / 2f))
-
-                // 3. Draw the signature onto the final bitmap
-                canvas.drawBitmap(sigBitmap, matrix, null)
-
-            } catch (e: Exception) {
-                Log.e("Flatten", "Error drawing signature to bitmap", e)
-            }
-        }
-
-        return@withContext finalBitmap
-    }
-
-
-    suspend fun loadFullSignature(filePath: String): ImageBitmap? = withContext(Dispatchers.IO) {
-        try {
-            BitmapFactory.decodeFile(filePath)?.asImageBitmap()
-        } catch (e: Exception) {
-            Log.e("PdfSignScreen", "Failed to load full signature bitmap", e)
-            null
-        }
-    }
-
-    @Composable
-    fun SignatureSelectItem(file: File, onClick: () -> Unit) {
-        var imageBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
-
-        LaunchedEffect(file) {
-            withContext(Dispatchers.IO) {
-                try {
-                    val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                    BitmapFactory.decodeFile(file.absolutePath, options)
-                    options.inSampleSize = calculateInSampleSize(options, 150, 75)
-                    options.inJustDecodeBounds = false
-
-                    val bitmap = BitmapFactory.decodeFile(file.absolutePath, options)
-                    imageBitmap = bitmap?.asImageBitmap()
-                } catch (e: Exception) {
-                    Log.e("SignatureSelectItem", "Failed to load bitmap", e)
-                }
-            }
-        }
-
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = LocalIndication.current,
-                    onClick = onClick
-                ),
-            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier
-                        .height(50.dp)
-                        .width(100.dp)
-                        .background(Color.White)
-                        .border(1.dp, Color.Gray),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (imageBitmap != null) {
-                        Image(
-                            bitmap = imageBitmap!!,
-                            contentDescription = "Saved Signature"
-                        )
-                    } else {
-                        CircularProgressIndicator(modifier = Modifier.size(20.dp))
-                    }
-                }
-                Spacer(modifier = Modifier.width(16.dp))
-                Text(
-                    text = file.nameWithoutExtension,
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.weight(1f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-        }
-    }
-
-    @OptIn(ExperimentalMaterial3Api::class)
-    @Composable
-    fun SavePdfDialog(
-        onDismiss: () -> Unit,
-        onSave: (String) -> Unit
-    ) {
-        var text by remember { mutableStateOf("Signed-DocuScan-${System.currentTimeMillis()}.pdf") }
-
-        AlertDialog(
-            onDismissRequest = onDismiss,
-            title = { Text("Save Signed PDF") },
-            text = {
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = { text = it },
-                    label = { Text("File Name") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = { if (text.isNotBlank()) onSave(text) },
-                    enabled = text.isNotBlank()
-                ) {
-                    Text("Save")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = onDismiss) {
-                    Text("Cancel")
-                }
-            }
-        )
-    }
-
-    // --- END OF HELPER FUNCTIONS ---
-
-
-    // --- Load PDF ---
+    // --- 1. Load PDF ---
     LaunchedEffect(pdfUri) {
-        isLoading = true
         withContext(Dispatchers.IO) {
             try {
                 val pfd = context.contentResolver.openFileDescriptor(pdfUri, "r")
                 if (pfd != null) {
-                    val renderer = PdfRenderer(pfd)
                     parcelFileDescriptor = pfd
-                    pdfRenderer = renderer
-                    pageCount = renderer.pageCount
-                    currentPage = 0
+                    pdfRenderer = PdfRenderer(pfd)
+                    pageCount = pdfRenderer?.pageCount ?: 0
                 }
+                isLoading = false
             } catch (e: Exception) {
-                Log.e("PdfSignScreen", "Error opening PDF", e)
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(context, "Error opening PDF", Toast.LENGTH_LONG).show()
-                    navController.popBackStack()
-                }
+                Log.e("PdfSignScreen", "Error loading PDF", e)
             }
         }
     }
 
-    // --- Render Current Page ---
-    LaunchedEffect(pdfRenderer, currentPage) {
-        pdfRenderer?.let {
-            isLoading = true
-            pageScale = 1f
-            pageOffset = Offset.Zero
-
-            withContext(Dispatchers.IO) {
-                val page = it.openPage(currentPage)
-                pdfPageSize = IntSize(page.width, page.height)
-                val bitmap = Bitmap.createBitmap(page.width, page.height, Bitmap.Config.ARGB_8888)
-                bitmap.eraseColor(android.graphics.Color.WHITE)
-
-                page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                currentPageBitmap = bitmap.asImageBitmap()
-                page.close()
-            }
-            isLoading = false
-        }
-    }
-
-    // --- Clean up ---
+    // --- 2. Cleanup ---
     DisposableEffect(Unit) {
         onDispose {
-            Log.d("PdfSignScreen", "Disposing PDF Renderer")
-            currentPageBitmap = null
-            try {
-                pdfRenderer?.close()
-                parcelFileDescriptor?.close()
-            } catch (e: Exception) {
-                Log.e("PdfSignScreen", "Error closing PDF renderer", e)
-            }
+            try { pdfRenderer?.close(); parcelFileDescriptor?.close() } catch (e: Exception) { }
         }
     }
 
-    // --- Load saved signatures when the sheet is requested ---
+    // --- 3. Load Saved Signatures ---
     LaunchedEffect(showSignatureSheet) {
-        if (showSignatureSheet) {
-            savedSignatures = SignatureRepository.getSavedSignatures(context)
+        if (showSignatureSheet) savedSignatures = SignatureRepository.getSavedSignatures(context)
+    }
+
+    // --- 4. Save Logic ---
+    fun saveDocument(fileName: String) {
+        isSaving = true
+        scope.launch {
+            val tempUris = mutableListOf<Uri>()
+            withContext(Dispatchers.IO) {
+                val renderer = pdfRenderer ?: return@withContext
+                for (i in 0 until pageCount) {
+                    pdfMutex.withLock {
+                        try {
+                            val page = renderer.openPage(i)
+                            val bitmap = Bitmap.createBitmap(page.width, page.height, Bitmap.Config.ARGB_8888)
+                            bitmap.eraseColor(android.graphics.Color.WHITE)
+                            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                            page.close()
+
+                            val canvas = Canvas(bitmap)
+                            val pageSignatures = allSignatures.filter { it.pageIndex == i }
+                            pageSignatures.forEach { sig ->
+                                val sigBmp = sig.bitmap.asAndroidBitmap()
+                                val matrix = Matrix()
+
+                                val scaleX = sig.width / sigBmp.width
+                                val scaleY = sig.height / sigBmp.height
+
+                                matrix.postScale(scaleX, scaleY)
+                                matrix.postRotate(sig.rotation, (sigBmp.width * scaleX) / 2, (sigBmp.height * scaleY) / 2)
+                                matrix.postTranslate(sig.x, sig.y)
+
+                                canvas.drawBitmap(sigBmp, matrix, null)
+                            }
+                            tempUris.add(FileUtils.saveBitmapToTempFile(context, bitmap))
+                            bitmap.recycle()
+                        } catch (e: Exception) { Log.e("Save", "Error saving page $i", e) }
+                    }
+                }
+            }
+
+            if (tempUris.isNotEmpty()) {
+                saveCleanPdf(context, tempUris, fileName) { success ->
+                    isSaving = false
+                    if (success) {
+                        Toast.makeText(context, "Saved!", Toast.LENGTH_SHORT).show()
+                        navController.navigate(Routes.FILES) { popUpTo(Routes.HOME); launchSingleTop = true }
+                    } else {
+                        Toast.makeText(context, "Save failed", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } else { isSaving = false }
         }
     }
 
     if (showSaveDialog) {
-        SavePdfDialog(
-            onDismiss = { showSaveDialog = false },
-            onSave = { fileName ->
-                showSaveDialog = false
-                isLoading = true
-                scope.launch {
-                    // --- *** FIXED SAVE LOGIC *** ---
-                    // Instead of List<Bitmap>, we now collect List<Uri> (temp files)
-                    val tempUris = mutableListOf<Uri>()
-
-                    withContext(Dispatchers.IO) {
-                        if (pdfRenderer == null) {
-                            Log.e("PdfSignScreen", "Save failed: PdfRenderer is null")
-                            return@withContext
-                        }
-                        for (i in 0 until pageCount) {
-                            // 1. Render original page
-                            val page = pdfRenderer!!.openPage(i)
-                            val baseBitmap = Bitmap.createBitmap(page.width, page.height, Bitmap.Config.ARGB_8888)
-                            baseBitmap.eraseColor(android.graphics.Color.WHITE)
-                            page.render(baseBitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                            page.close()
-
-                            // 2. Get signatures for this page
-                            val sigsForThisPage = allPlacedSignatures.filter { it.pageIndex == i }
-
-                            // 3. Flatten
-                            val finalBitmap = flattenBitmap(
-                                baseBitmap = baseBitmap.asImageBitmap(),
-                                signatures = sigsForThisPage,
-                                pdfPageSize = pdfPageSize,
-                                composableSize = composableSize,
-                                pageScale = 1f,
-                                pageOffset = Offset.Zero
-                            )
-
-                            // 4. Save to Temp File immediately
-                            val bitmapToSave = finalBitmap ?: baseBitmap
-                            val uri = FileUtils.saveBitmapToTempFile(context, bitmapToSave)
-                            tempUris.add(uri)
-
-                            // 5. Recycle immediately to free memory
-                            if (finalBitmap != null) finalBitmap.recycle()
-                            baseBitmap.recycle()
-                        }
-                    }
-
-                    // 4. Pass URIs to FileActions
-                    FileActions.saveBitmapsAsPdf(
-                        uris = tempUris, // <--- PASSING URIS NOW
-                        fileName = fileName,
-                        context = context,
-                        onComplete = { success ->
-                            isLoading = false
-                            if (success) {
-                                Toast.makeText(context, "Signed PDF saved!", Toast.LENGTH_LONG).show()
-                                navController.navigate(Routes.FILES) {
-                                    popUpTo(Routes.HOME)
-                                    launchSingleTop = true
-                                }
-                            } else {
-                                Toast.makeText(context, "Failed to save PDF", Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                    )
-                }
-            }
-        )
+        SavePdfDialog(onDismiss = { showSaveDialog = false }, onSave = { name -> showSaveDialog = false; saveDocument(name) })
     }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Sign Document") },
+                title = { Text("Sign Document", fontWeight = FontWeight.Bold) },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
                     }
                 },
                 actions = {
-                    if (selectedSignatureId != null) {
-                        IconButton(onClick = {
-                            allPlacedSignatures.removeAll { it.id == selectedSignatureId }
-                            selectedSignatureId = null
-                        }) {
-                            Icon(Icons.Default.Delete, contentDescription = "Delete Signature", tint = MaterialTheme.colorScheme.error)
-                        }
+                    // One big save button
+                    IconButton(onClick = { showSaveDialog = true }, enabled = !isLoading && !isSaving) {
+                        if (isSaving) CircularProgressIndicator(modifier = Modifier.size(24.dp)) else Icon(Icons.Default.Check, "Save", modifier = Modifier.size(32.dp))
                     }
-                    IconButton(
-                        onClick = { showSaveDialog = true },
-                        // Enable save if we have loaded the PDF (don't require a signature to save)
-                        enabled = pageCount > 0
-                    ) {
-                        Icon(Icons.Default.Check, contentDescription = "Save Document")
-                    }
-                }
+                },
+                // FIX 1: Remove Top Padding (Status Bar inset)
+                windowInsets = WindowInsets(0.dp)
             )
         },
-        bottomBar = {
-            BottomAppBar(
-                actions = {
-                    IconButton(
-                        onClick = { if (currentPage > 0) currentPage-- },
-                        enabled = currentPage > 0
-                    ) {
-                        Icon(Icons.AutoMirrored.Filled.NavigateBefore, contentDescription = "Previous Page")
-                    }
-                    if (pageCount > 0) {
-                        Text("Page ${currentPage + 1} of $pageCount")
-                    }
-                    IconButton(
-                        onClick = { if (currentPage < pageCount - 1) currentPage++ },
-                        enabled = currentPage < pageCount - 1
-                    ) {
-                        Icon(Icons.AutoMirrored.Filled.NavigateNext, contentDescription = "Next Page")
-                    }
-                },
-                floatingActionButton = {
-                    ExtendedFloatingActionButton(
-                        onClick = { showSignatureSheet = true },
-                        icon = { Icon(Icons.Default.Add, contentDescription = "Add Signature") },
-                        text = { Text("Add Signature") },
-                        elevation = FloatingActionButtonDefaults.elevation(0.dp, 0.dp)
-                    )
-                }
-            )
+        floatingActionButton = {
+            if (selectedSignatureId == null) {
+                ExtendedFloatingActionButton(
+                    onClick = { showSignatureSheet = true },
+                    icon = { Icon(Icons.Default.Add, "Add") },
+                    text = { Text("Signature") }
+                )
+            }
         }
-    ) { paddingValues ->
+    ) { padding ->
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(paddingValues)
-                .background(Color.Gray)
-                .clipToBounds(),
+                // FIX 2: ONLY apply TOP padding. Ignore bottom/other padding to remove wasted space.
+                .padding(top = padding.calculateTopPadding())
+                .background(Color.LightGray)
+                .onSizeChanged { containerSize = it }
+                // --- TAP GESTURES (Background) ---
+                .pointerInput(Unit) {
+                    detectTapGestures(
+                        onTap = { selectedSignatureId = null },
+                        onDoubleTap = {
+                            scope.launch {
+                                val current = scaleAnim.value
+                                val target = if (current < 1.5f) 2f else if (current < 2.5f) 3f else 1f
+                                scaleAnim.animateTo(target, animationSpec = tween(300))
+                                if (target == 1f) offsetX = 0f
+                            }
+                        }
+                    )
+                }
+                // --- ZOOM & PAN GESTURES (Background) ---
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        awaitFirstDown()
+                        do {
+                            val event = awaitPointerEvent()
+                            val isConsumed = event.changes.any { it.isConsumed }
+
+                            if (!isConsumed) {
+                                if (event.changes.size >= 2) {
+                                    val zoomChange = event.calculateZoom()
+                                    if (zoomChange != 1f) {
+                                        val newScale = (scaleAnim.value * zoomChange).coerceIn(1f, 3f)
+                                        scope.launch { scaleAnim.snapTo(newScale) }
+                                        event.changes.forEach { if (it.positionChange() != Offset.Zero) it.consume() }
+                                    }
+                                }
+
+                                if (scaleAnim.value > 1f) {
+                                    val panChange = event.calculatePan()
+                                    val maxOffsetX = (containerSize.width * scaleAnim.value - containerSize.width) / 2f
+                                    val newX = offsetX + panChange.x
+                                    offsetX = newX.coerceIn(-maxOffsetX, maxOffsetX)
+                                } else {
+                                    offsetX = 0f
+                                }
+                            }
+                        } while (event.changes.any { it.pressed })
+                    }
+                },
             contentAlignment = Alignment.Center
         ) {
             if (isLoading) {
                 CircularProgressIndicator()
-            } else if (currentPageBitmap != null) {
-                Box(
+            } else {
+                LazyColumn(
+                    state = listState,
                     modifier = Modifier
                         .fillMaxSize()
-                        .onSizeChanged { composableSize = it }
-                        .aspectRatio(currentPageBitmap!!.width.toFloat() / currentPageBitmap!!.height.toFloat())
+                        .graphicsLayer {
+                            scaleX = scaleAnim.value
+                            scaleY = scaleAnim.value
+                            translationX = offsetX
+                        },
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    // FIX 3: Remove internal content padding
+                    contentPadding = PaddingValues(0.dp),
+                    userScrollEnabled = true
                 ) {
-                    Image(
-                        bitmap = currentPageBitmap!!,
-                        contentDescription = "PDF Page ${currentPage + 1}",
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .graphicsLayer(
-                                scaleX = pageScale,
-                                scaleY = pageScale,
-                                translationX = pageOffset.x,
-                                translationY = pageOffset.y
-                            ),
-                        contentScale = ContentScale.Fit
-                    )
-
-                    Canvas(modifier = Modifier
-                        .fillMaxSize()
-                        .pointerInput(Unit) {
-                            detectTransformGestures { centroid, pan, zoom, rotation ->
-                                val sigIndex = selectedSignatureId?.let { id ->
-                                    allPlacedSignatures.indexOfFirst { it.id == id }
-                                }
-
-                                if (sigIndex != null && sigIndex != -1) {
-                                    val sig = allPlacedSignatures[sigIndex]
-                                    val (scaleToFit, _, _) = getPageTransformations(pdfPageSize, composableSize)
-                                    val pageTotalScale = scaleToFit * pageScale
-
-                                    val bitmapPan = pan / pageTotalScale
-
-                                    allPlacedSignatures[sigIndex] = sig.copy(
-                                        scale = sig.scale * zoom,
-                                        rotation = sig.rotation + rotation,
-                                        offset = sig.offset + bitmapPan
-                                    )
-                                } else {
-                                    val oldScale = pageScale
-                                    val newScale = (pageScale * zoom).coerceIn(1f, 5f)
-
-                                    val (scaleToFit, offsetX, offsetY) = getPageTransformations(pdfPageSize, composableSize)
-                                    val scaledWidth = pdfPageSize.width * scaleToFit * newScale
-                                    val scaledHeight = pdfPageSize.height * scaleToFit * newScale
-
-                                    val maxX = (scaledWidth - composableSize.width).coerceAtLeast(0f) / 2f
-                                    val maxY = (scaledHeight - composableSize.height).coerceAtLeast(0f) / 2f
-
-                                    val newOffset = (pageOffset + centroid / oldScale) - (centroid / newScale) + (pan / oldScale)
-
-                                    pageOffset = Offset(
-                                        x = newOffset.x.coerceIn(-maxX, maxX),
-                                        y = newOffset.y.coerceIn(-maxY, maxY)
-                                    )
-                                    pageScale = newScale
-                                }
+                    items(count = pageCount) { pageIndex ->
+                        PdfPageItem(
+                            pageIndex = pageIndex,
+                            pdfRenderer = pdfRenderer,
+                            pdfMutex = pdfMutex,
+                            signatures = allSignatures.filter { it.pageIndex == pageIndex },
+                            selectedSignatureId = selectedSignatureId,
+                            onSelect = { selectedSignatureId = it },
+                            onUpdate = { updated ->
+                                val idx = allSignatures.indexOfFirst { it.id == updated.id }
+                                if (idx != -1) allSignatures[idx] = updated
+                            },
+                            onDelete = { idToDelete ->
+                                allSignatures.removeAll { it.id == idToDelete }
+                                selectedSignatureId = null
                             }
-                        }
-                        .pointerInput(Unit) {
-                            detectTapGestures(
-                                onTap = { tapOffset ->
-                                    val (scaleToFit, offsetX, offsetY) = getPageTransformations(pdfPageSize, composableSize)
-
-                                    val tapOnScreen = tapOffset
-                                    val tapOnPage = (tapOnScreen - pageOffset - Offset(offsetX, offsetY)) / (pageScale * scaleToFit)
-
-                                    val tappedSig = currentPageSignatures.findLast { sig ->
-                                        val sigRect = Rect(
-                                            sig.offset.x,
-                                            sig.offset.y,
-                                            sig.offset.x + sig.bitmap.width * sig.scale,
-                                            sig.offset.y + sig.bitmap.height * sig.scale
-                                        )
-                                        sigRect.contains(tapOnPage)
-                                    }
-
-                                    selectedSignatureId = tappedSig?.id
-                                }
-                            )
-                        }
-                    ) {
-                        withTransform({
-                            translate(left = pageOffset.x, top = pageOffset.y)
-                            scale(scaleX = pageScale, scaleY = pageScale, pivot = Offset.Zero)
-
-                            val (scaleToFit, offsetX, offsetY) = getPageTransformations(pdfPageSize, size.toIntSize())
-
-                            translate(left = offsetX, top = offsetY)
-                            scale(scaleX = scaleToFit, scaleY = scaleToFit, pivot = Offset.Zero)
-
-                        }) {
-                            currentPageSignatures.forEach { sig ->
-                                val sigWidth = sig.bitmap.width.toFloat()
-                                val sigHeight = sig.bitmap.height.toFloat()
-
-                                withTransform({
-                                    translate(left = sig.offset.x, top = sig.offset.y)
-                                    rotate(sig.rotation, pivot = Offset(sigWidth / 2, sigHeight / 2))
-                                    scale(scaleX = sig.scale, scaleY = sig.scale, pivot = Offset(sigWidth / 2, sigHeight / 2))
-                                }) {
-                                    drawImage(sig.bitmap)
-
-                                    if (sig.id == selectedSignatureId) {
-                                        val borderSize = Size(sigWidth, sigHeight)
-                                        val (scaleToFit, _, _) = getPageTransformations(pdfPageSize, composableSize)
-                                        drawRect(
-                                            color = Color.Blue,
-                                            topLeft = Offset.Zero,
-                                            size = borderSize,
-                                            style = Stroke(width = 8f / (sig.scale * pageScale * scaleToFit))
-                                        )
-                                    }
-                                }
-                            }
-                        }
+                        )
                     }
                 }
-            } else {
-                Text("Failed to load PDF.")
             }
         }
 
         if (showSignatureSheet) {
-            ModalBottomSheet(
-                onDismissRequest = { showSignatureSheet = false },
-                sheetState = sheetState
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp)
-                ) {
-                    Text(
-                        "Select a Signature",
-                        style = MaterialTheme.typography.titleLarge,
-                        modifier = Modifier.padding(bottom = 16.dp)
-                    )
-                    if (savedSignatures.isEmpty()) {
-                        Text(
-                            "No signatures found. Please add a signature from the 'Sign' tab.",
-                            modifier = Modifier.padding(vertical = 16.dp)
-                        )
-                    } else {
-                        LazyColumn(
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            items(savedSignatures, key = { it.absolutePath }) { file ->
-                                SignatureSelectItem(
-                                    file = file,
-                                    onClick = {
-                                        scope.launch {
-                                            val bitmap = loadFullSignature(file.absolutePath)
-                                            if (bitmap != null) {
-                                                val (scaleToFit, offsetX, offsetY) = getPageTransformations(pdfPageSize, composableSize)
-                                                val composableCenter = Offset(composableSize.width / 2f, composableSize.height / 2f)
-                                                val centerOnPage = (composableCenter - pageOffset - Offset(offsetX, offsetY)) / (pageScale * scaleToFit)
-
-                                                val newSig = PlacedSignature(
-                                                    bitmap = bitmap,
-                                                    pageIndex = currentPage,
-                                                    offset = Offset(
-                                                        centerOnPage.x - (bitmap.width / 2f),
-                                                        centerOnPage.y - (bitmap.height / 2f)
-                                                    ),
-                                                    scale = 1f / pageScale
-                                                )
-
-                                                allPlacedSignatures.add(newSig)
-                                                selectedSignatureId = newSig.id
-                                                sheetState.hide()
-                                            } else {
-                                                Toast.makeText(context, "Failed to load signature", Toast.LENGTH_SHORT).show()
-                                            }
-                                        }.invokeOnCompletion {
-                                            if (!sheetState.isVisible) {
-                                                showSignatureSheet = false
-                                            }
-                                        }
-                                    }
-                                )
+            ModalBottomSheet(onDismissRequest = { showSignatureSheet = false }, sheetState = sheetState) {
+                SignatureSelectionSheet(savedSignatures) { file ->
+                    scope.launch {
+                        val bitmap = BitmapFactory.decodeFile(file.absolutePath)?.asImageBitmap()
+                        if (bitmap != null) {
+                            val layoutInfo = listState.layoutInfo
+                            val viewportCenter = layoutInfo.viewportEndOffset / 2
+                            val centerItem = layoutInfo.visibleItemsInfo.minByOrNull { item ->
+                                val itemCenter = item.offset + (item.size / 2)
+                                abs(itemCenter - viewportCenter)
                             }
+                            val targetPage = centerItem?.index ?: 0
+
+                            var pdfPageW = 595f
+                            var pdfPageH = 842f
+                            withContext(Dispatchers.IO) {
+                                pdfMutex.withLock {
+                                    try {
+                                        val page = pdfRenderer?.openPage(targetPage)
+                                        if (page != null) {
+                                            pdfPageW = page.width.toFloat()
+                                            pdfPageH = page.height.toFloat()
+                                            page.close()
+                                        }
+                                    } catch (e: Exception) { }
+                                }
+                            }
+
+                            val screenPageW = centerItem?.size?.toFloat() ?: 1080f
+                            val scaleFactor = screenPageW / pdfPageW
+                            val visualCenterYOnPage = (layoutInfo.viewportSize.height / 2) - (centerItem?.offset ?: 0)
+                            val pdfCenterY = visualCenterYOnPage / scaleFactor
+
+                            val aspectRatio = bitmap.height.toFloat() / bitmap.width.toFloat()
+                            val width = 200f
+                            val height = width * aspectRatio
+
+                            val startX = (pdfPageW - width) / 2
+                            val startY = pdfCenterY - (height / 2)
+
+                            val newSig = PlacedSignature(
+                                bitmap = bitmap,
+                                pageIndex = targetPage,
+                                x = startX, y = startY,
+                                width = width, height = height
+                            )
+                            allSignatures.add(newSig)
+                            selectedSignatureId = newSig.id
+                            showSignatureSheet = false
                         }
                     }
-                    Spacer(modifier = Modifier.height(32.dp))
                 }
             }
         }
+    }
+}
+
+@Composable
+fun PdfPageItem(
+    pageIndex: Int,
+    pdfRenderer: PdfRenderer?,
+    pdfMutex: Mutex,
+    signatures: List<PlacedSignature>,
+    selectedSignatureId: Long?,
+    onSelect: (Long) -> Unit,
+    onUpdate: (PlacedSignature) -> Unit,
+    onDelete: (Long) -> Unit
+) {
+    var pageBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var pdfPageSize by remember { mutableStateOf(IntSize(0, 0)) }
+
+    LaunchedEffect(pageIndex) {
+        if (pdfRenderer != null) {
+            withContext(Dispatchers.IO) {
+                pdfMutex.withLock {
+                    try {
+                        val page = pdfRenderer.openPage(pageIndex)
+                        pdfPageSize = IntSize(page.width, page.height)
+                        val w = (page.width * 2).toInt()
+                        val h = (page.height * 2).toInt()
+                        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                        bmp.eraseColor(android.graphics.Color.WHITE)
+                        page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                        withContext(Dispatchers.Main) { pageBitmap = bmp }
+                        page.close()
+                    } catch (e: Exception) { }
+                }
+            }
+        }
+    }
+
+    if (pageBitmap != null) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(pdfPageSize.width.toFloat() / pdfPageSize.height.toFloat())
+                .background(Color.White)
+        ) {
+            Image(
+                bitmap = pageBitmap!!.asImageBitmap(),
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.FillBounds
+            )
+
+            BoxWithConstraints(Modifier.fillMaxSize()) {
+                val viewWidth = maxWidth.value * LocalDensity.current.density
+                val scaleFactor = if (pdfPageSize.width > 0) viewWidth / pdfPageSize.width else 1f
+
+                signatures.forEach { sig ->
+                    SignatureView(
+                        signature = sig,
+                        scaleFactor = scaleFactor,
+                        pdfPageSize = pdfPageSize,
+                        isSelected = (sig.id == selectedSignatureId),
+                        onSelect = { onSelect(sig.id) },
+                        onUpdate = onUpdate,
+                        onDelete = { onDelete(sig.id) }
+                    )
+                }
+            }
+        }
+    } else {
+        Box(Modifier.fillMaxWidth().height(300.dp), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
+        }
+    }
+}
+
+@Composable
+fun SignatureView(
+    signature: PlacedSignature,
+    scaleFactor: Float,
+    pdfPageSize: IntSize,
+    isSelected: Boolean,
+    onSelect: () -> Unit,
+    onUpdate: (PlacedSignature) -> Unit,
+    onDelete: () -> Unit
+) {
+    val screenX = signature.x * scaleFactor
+    val screenY = signature.y * scaleFactor
+    val screenW = signature.width * scaleFactor
+    val screenH = signature.height * scaleFactor
+
+    // State Management
+    val currentSignature by rememberUpdatedState(signature)
+    val currentOnUpdate by rememberUpdatedState(onUpdate)
+    val currentOnSelect by rememberUpdatedState(onSelect)
+
+    Box(
+        modifier = Modifier
+            .offset { IntOffset(screenX.roundToInt(), screenY.roundToInt()) }
+            .size(
+                width = with(LocalDensity.current) { screenW.toDp() },
+                height = with(LocalDensity.current) { screenH.toDp() }
+            )
+            .graphicsLayer { rotationZ = signature.rotation }
+            .zIndex(if(isSelected) 10f else 1f)
+            .pointerInput(Unit) {
+                detectTapGestures(onTap = { currentOnSelect() })
+            }
+            .pointerInput(Unit) {
+                detectTransformGestures { _, pan, zoom, rotation ->
+                    currentOnSelect()
+
+                    val sig = currentSignature
+                    val dx = pan.x / scaleFactor
+                    val dy = pan.y / scaleFactor
+                    val newW = (sig.width * zoom).coerceAtLeast(20f)
+                    val newH = (sig.height * zoom).coerceAtLeast(20f)
+
+                    val wChange = newW - sig.width
+                    val hChange = newH - sig.height
+                    var rawX = sig.x + dx - (wChange / 2)
+                    var rawY = sig.y + dy - (hChange / 2)
+
+                    val maxX = pdfPageSize.width - newW
+                    val maxY = pdfPageSize.height - newH
+
+                    val safeX = rawX.coerceIn(0f, maxX.coerceAtLeast(0f))
+                    val safeY = rawY.coerceIn(0f, maxY.coerceAtLeast(0f))
+
+                    currentOnUpdate(sig.copy(
+                        x = safeX,
+                        y = safeY,
+                        width = newW,
+                        height = newH,
+                        rotation = sig.rotation + rotation
+                    ))
+                }
+            }
+    ) {
+        // 1. Image
+        Image(
+            bitmap = signature.bitmap,
+            contentDescription = "Signature",
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.FillBounds
+        )
+
+        if (isSelected) {
+            // 2. Border (Sibling behind button)
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .border(2.dp, Color.Blue)
+            )
+
+            // 3. Close Button (Sibling on top, zIndex 2f)
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .offset(x = 12.dp, y = (-12).dp)
+                    .zIndex(2f) // Fix: Explicit high Z-Index
+                    .size(24.dp)
+                    .shadow(4.dp, CircleShape)
+                    .background(MaterialTheme.colorScheme.error, CircleShape)
+                    .clip(CircleShape)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { onDelete() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = "Delete",
+                    tint = Color.White,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun SignatureSelectionSheet(signatures: List<File>, onSelect: (File) -> Unit) {
+    Column(Modifier.padding(16.dp).fillMaxWidth()) {
+        Text("Select Signature", style = MaterialTheme.typography.titleLarge)
+        Spacer(Modifier.height(16.dp))
+        if (signatures.isEmpty()) {
+            Text("No saved signatures. Go to 'Sign' tab to create one.")
+        } else {
+            LazyColumn {
+                items(signatures.size) { i ->
+                    val file = signatures[i]
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null
+                            ) { onSelect(file) }
+                            .padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val bmp = remember(file) { BitmapFactory.decodeFile(file.absolutePath)?.asImageBitmap() }
+                        if (bmp != null) {
+                            Image(bmp, null, Modifier.size(50.dp, 30.dp).background(Color.White).border(1.dp, Color.Gray))
+                        }
+                        Spacer(Modifier.width(16.dp))
+                        Text(file.name)
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+fun SavePdfDialog(onDismiss: () -> Unit, onSave: (String) -> Unit) {
+    var text by remember { mutableStateOf("Signed-Doc.pdf") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Save Signed PDF") },
+        text = { OutlinedTextField(value = text, onValueChange = { text = it }, label = { Text("File Name") }) },
+        confirmButton = { Button(onClick = { if (text.isNotBlank()) onSave(text) }) { Text("Save") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+private suspend fun saveCleanPdf(context: Context, uris: List<Uri>, fileName: String, onComplete: (Boolean) -> Unit) = withContext(Dispatchers.IO) {
+    val pdfDocument = PdfDocument()
+    try {
+        uris.forEachIndexed { index, uri ->
+            val bitmap = try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    val source = android.graphics.ImageDecoder.createSource(context.contentResolver, uri)
+                    android.graphics.ImageDecoder.decodeBitmap(source) { decoder, _, _ -> decoder.isMutableRequired = true }
+                } else {
+                    @Suppress("DEPRECATION")
+                    MediaStore.Images.Media.getBitmap(context.contentResolver, uri)
+                }
+            } catch (e: Exception) { return@forEachIndexed }
+
+            val pageInfo = PdfDocument.PageInfo.Builder(bitmap.width, bitmap.height, index + 1).create()
+            val page = pdfDocument.startPage(pageInfo)
+            page.canvas.drawBitmap(bitmap, 0f, 0f, null)
+            pdfDocument.finishPage(page)
+            bitmap.recycle()
+        }
+
+        val resolver = context.contentResolver
+        val contentValues = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, if (fileName.endsWith(".pdf")) fileName else "$fileName.pdf")
+            put(MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.MediaColumns.RELATIVE_PATH, "Download/DocuScanner")
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
+            }
+        }
+
+        val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+        } else null
+
+        val outputStream = if (uri != null) resolver.openOutputStream(uri) else {
+            val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val appDir = File(downloadsDir, "DocuScanner").apply { if (!exists()) mkdirs() }
+            FileOutputStream(File(appDir, if (fileName.endsWith(".pdf")) fileName else "$fileName.pdf"))
+        }
+
+        if (outputStream != null) {
+            outputStream.use { pdfDocument.writeTo(it) }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && uri != null) {
+                contentValues.clear()
+                contentValues.put(MediaStore.MediaColumns.IS_PENDING, 0)
+                resolver.update(uri, contentValues, null, null)
+            }
+            withContext(Dispatchers.Main) { onComplete(true) }
+        } else {
+            withContext(Dispatchers.Main) { onComplete(false) }
+        }
+    } catch (e: Exception) {
+        withContext(Dispatchers.Main) { onComplete(false) }
+    } finally {
+        pdfDocument.close()
     }
 }

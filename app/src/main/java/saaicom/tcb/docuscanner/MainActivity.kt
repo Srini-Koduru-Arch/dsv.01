@@ -2,15 +2,16 @@ package saaicom.tcb.docuscanner
 
 import android.Manifest
 import android.app.Activity
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -20,6 +21,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
@@ -42,31 +45,41 @@ import saaicom.tcb.docuscanner.screens.camera.CameraScreen
 import saaicom.tcb.docuscanner.screens.edit.ScannedDocumentEditScreen
 import saaicom.tcb.docuscanner.screens.files.FilesScreen
 import saaicom.tcb.docuscanner.screens.home.HomeScreen
-import saaicom.tcb.docuscanner.screens.profile.ProfileScreen
+import saaicom.tcb.docuscanner.screens.settings.SettingsScreen
 import saaicom.tcb.docuscanner.screens.sign.PdfSignScreen
 import saaicom.tcb.docuscanner.screens.sign.SignScreen
 import saaicom.tcb.docuscanner.screens.viewer.PdfViewScreen
 import saaicom.tcb.docuscanner.ui.theme.DocuScannerTheme
-import android.content.pm.ActivityInfo
-import androidx.compose.ui.platform.LocalLayoutDirection
-import androidx.compose.ui.unit.dp
+import android.content.Intent
+import android.provider.Settings
+import android.os.Environment
+import saaicom.tcb.docuscanner.screens.settings.ImportFilesScreen
 
 // Define your routes as constants
 object Routes {
     const val HOME = "home"
     const val FILES = "files"
     const val CAMERA = "camera"
-    const val SIGN = "sign" // Replaced CLOUD_FILES
-    const val PROFILE = "profile"
+    const val SIGN = "sign"
+    const val SETTINGS = "settings"
     const val EDIT_DOCUMENT = "edit_document/{imageUri}"
-    const val PDF_SIGN = "pdf_sign/{pdfUri}" // For signing a PDF
-    const val PDF_VIEW = "pdf_view/{pdfUri}" // For viewing a PDF
+    const val PDF_SIGN = "pdf_sign/{pdfUri}"
+    const val PDF_VIEW = "pdf_view/{pdfUri}"
+    const val IMPORT = "import" // for now it is for importing from Google Drive
 }
 
 class MainActivity : ComponentActivity() {
 
     private val _hasStoragePermission = mutableStateOf(false)
     val hasStoragePermission: State<Boolean> = _hasStoragePermission
+
+    private val storageManagerLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            _hasStoragePermission.value = Environment.isExternalStorageManager()
+        }
+    }
 
     companion object {
         init {
@@ -77,7 +90,6 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-
 
     // Launcher for a single permission request (e.g., Camera)
     private val requestCameraPermissionLauncher = registerForActivityResult(
@@ -94,7 +106,6 @@ class MainActivity : ComponentActivity() {
     private val requestStoragePermissionsLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
-
         // Check for read permission (all versions)
         val readImagesGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissions[Manifest.permission.READ_MEDIA_IMAGES] ?: false
@@ -109,7 +120,6 @@ class MainActivity : ComponentActivity() {
             true // Not needed on API 29+ (Scoped Storage), so treat as "granted"
         }
 
-        // *** FIX: Must have both permissions ***
         _hasStoragePermission.value = readImagesGranted && writeExternalGranted
 
         if (_hasStoragePermission.value) {
@@ -163,39 +173,43 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun requestStoragePermissions() {
-        val permissionsToRequest = mutableListOf<String>()
-        var readGranted = false
-        // Default to true (not needed on new phones)
-        var writeGranted = true
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            // Android 13+
-            readGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED
-            if (!readGranted) {
-                permissionsToRequest.add(Manifest.permission.READ_MEDIA_IMAGES)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            // Android 11+ (API 30+): Request MANAGE_EXTERNAL_STORAGE
+            if (Environment.isExternalStorageManager()) {
+                _hasStoragePermission.value = true
+                Log.d("MainActivity", "All Files Access already granted. ✅")
+            } else {
+                Log.i("MainActivity", "Requesting All Files Access. 🚦")
+                try {
+                    val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+                    intent.addCategory("android.intent.category.DEFAULT")
+                    // FIXED LINE BELOW:
+                    intent.data = Uri.parse("package:${applicationContext.packageName}")
+                    storageManagerLauncher.launch(intent)
+                } catch (e: Exception) {
+                    val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                    storageManagerLauncher.launch(intent)
+                }
             }
         } else {
-            // Android 12 and below
-            readGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
-            if (!readGranted) {
+            // Android 10 and below: Use standard runtime permissions
+            val permissionsToRequest = mutableListOf<String>()
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
                 permissionsToRequest.add(Manifest.permission.READ_EXTERNAL_STORAGE)
             }
-
-            // *** FIX: Add WRITE_EXTERNAL_STORAGE for Android 9 (API 28) and below ***
+            // WRITE permission is only needed for Android 9 (Pie) and lower, strictly speaking,
+            // but we request it for 10 just in case legacy flags are used.
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-                writeGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
-                if (!writeGranted) {
+                if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
                     permissionsToRequest.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
                 }
             }
-        }
 
-        if (permissionsToRequest.isNotEmpty()) {
-            Log.i("MainActivity", "Requesting storage permissions: $permissionsToRequest 🚦")
-            requestStoragePermissionsLauncher.launch(permissionsToRequest.toTypedArray())
-        } else {
-            _hasStoragePermission.value = readGranted && writeGranted
-            Log.d("MainActivity", "All necessary storage permissions already granted. ✅")
+            if (permissionsToRequest.isNotEmpty()) {
+                requestStoragePermissionsLauncher.launch(permissionsToRequest.toTypedArray())
+            } else {
+                _hasStoragePermission.value = true
+            }
         }
     }
 }
@@ -208,23 +222,25 @@ fun DocuScannerApp(requestCameraPermission: () -> Unit, hasStoragePermission: Bo
     val scope = rememberCoroutineScope()
     var isDrawingSignature by remember { mutableStateOf(false) }
 
-    // <<< NEW: Get current route and activity >>>
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
     val activity = LocalContext.current as? Activity
 
-
-    // <<< NEW: Global orientation manager >>>
+    // *** CRITICAL FIX: Safe Orientation Logic ***
     LaunchedEffect(currentRoute, activity) {
-        // Force portrait for all screens *except* SignScreen.
-        // SignScreen will manage its own orientation (portrait list -> landscape canvas).
-        if (currentRoute != Routes.SIGN) {
-            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-        }
-    }
-    // <<< END NEW >>>
+        if (activity == null) return@LaunchedEffect
 
-    // Persistent sign-in check (can remain, won't hurt)
+        // Only enforce Portrait if we are NOT in Sign mode
+        if (currentRoute != Routes.SIGN) {
+            // CHECK first. Only set if different. This prevents the crash loop.
+            if (activity.requestedOrientation != ActivityInfo.SCREEN_ORIENTATION_PORTRAIT) {
+                activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            }
+        }
+        // We let SignScreen handle its own forcing to Landscape
+    }
+    // *** END CRITICAL FIX ***
+
     LaunchedEffect(Unit) {
         val lastSignedInAccount = GoogleSignIn.getLastSignedInAccount(context)
         if (lastSignedInAccount != null) {
@@ -254,7 +270,7 @@ fun DocuScannerApp(requestCameraPermission: () -> Unit, hasStoragePermission: Bo
         }
     ) { innerPadding ->
         val navHostPadding = if(isDrawingSignature) {
-            PaddingValues(0.dp) // No padding at all when drawing
+            PaddingValues(0.dp)
         } else {
             PaddingValues(
                 top = innerPadding.calculateTopPadding(),
@@ -314,17 +330,17 @@ fun DocuScannerApp(requestCameraPermission: () -> Unit, hasStoragePermission: Bo
                 onDrawingChange = { isDrawingSignature = it }
             ) }
 
-            composable(Routes.PROFILE) { ProfileScreen() }
+            composable(Routes.SETTINGS) { SettingsScreen(navController) }
+            composable(Routes.IMPORT) { ImportFilesScreen(navController) }
 
             composable(
                 route = Routes.EDIT_DOCUMENT + "?corners={corners}",
                 arguments = listOf(
                     navArgument("imageUri") { type = NavType.StringType },
-                    // 2. Define the new 'corners' argument
                     navArgument("corners") {
                         type = NavType.StringType
                         nullable = true
-                        defaultValue = "null" // Default to "null" if not provided
+                        defaultValue = "null"
                     }
                 )
             ) { backStackEntry ->
@@ -407,6 +423,14 @@ fun DocuScannerBottomNavigationBar(navController: NavController) {
         }
     }
 
+    // Helper for Safe Navigation (No State Restore for Settings to prevent crash)
+    val navigateToSettingsSafe = {
+        navController.navigate(Routes.SETTINGS) {
+            popUpTo(navController.graph.findStartDestination().id)
+            launchSingleTop = true
+        }
+    }
+
     NavigationBar(
         containerColor = Color.DarkGray,
         contentColor = Color.White
@@ -438,7 +462,7 @@ fun DocuScannerBottomNavigationBar(navController: NavController) {
             )
         )
         NavigationBarItem(
-            icon = { Icon(Icons.Filled.Camera, contentDescription = "Camera") },
+            icon = { Icon(Icons.Filled.PhotoCamera, contentDescription = "Camera") },
             label = { Text("Camera") },
             selected = currentRoute == Routes.CAMERA,
             onClick = { navigateToScreen(Routes.CAMERA) },
@@ -466,10 +490,12 @@ fun DocuScannerBottomNavigationBar(navController: NavController) {
         )
 
         NavigationBarItem(
-            icon = { Icon(Icons.Filled.Person, contentDescription = "Profile") },
-            label = { Text("Profile") },
-            selected = currentRoute == Routes.PROFILE,
-            onClick = { navigateToScreen(Routes.PROFILE) },
+            icon = { Icon(Icons.Filled.Settings, contentDescription = "Settings") },
+            label = { Text("Settings") },
+            selected = currentRoute == Routes.SETTINGS,
+            // *** CRITICAL FIX: Use Safe Navigation for Settings ***
+            onClick = { navigateToSettingsSafe() },
+            //onClick = { navigateToScreen(Routes.SETTINGS) },
             colors = NavigationBarItemDefaults.colors(
                 selectedIconColor = Color.White,
                 selectedTextColor = Color.White,
