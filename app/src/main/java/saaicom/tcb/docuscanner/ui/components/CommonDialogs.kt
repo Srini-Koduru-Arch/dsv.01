@@ -1,7 +1,9 @@
 package saaicom.tcb.docuscanner.ui.components
 
 import android.net.Uri
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -105,7 +107,13 @@ fun SelectFileDialog(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clickable { onFileSelected(file.uri) }
+                                    // <<< FIX: Use explicit interactionSource and indication >>>
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = LocalIndication.current,
+                                        onClick = { onFileSelected(file.uri) }
+                                    )
+                                    // <<< END FIX >>>
                                     .padding(vertical = 12.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
