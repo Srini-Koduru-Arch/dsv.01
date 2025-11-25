@@ -34,7 +34,8 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = true
+            //isMinifyEnabled = true     // Code shrinking and obfuscation (R8)
+            //isShrinkResources = true   // Resource shrinking (removes unused drawables, etc.)
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -71,7 +72,6 @@ dependencies {
     implementation(libs.androidx.camera.video)
     implementation(libs.androidx.camera.view)
     implementation(libs.androidx.camera.extensions)
-
     // Lifecycle ViewModel and runtime
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.runtime.ktx.v292)
@@ -87,6 +87,8 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
     implementation(libs.play.services.ads.api)
     implementation(libs.androidx.compose.ui.unit)
+    implementation(libs.androidx.window)
+    implementation(libs.androidx.compose.material3.window.size.class1)
     debugImplementation(libs.ui.tooling)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
@@ -103,10 +105,8 @@ dependencies {
     androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
-
     // For Google Sign-In
     implementation(libs.play.services.auth)
-
 // For Google Drive API
     implementation(libs.google.api.client.android)
     implementation("com.google.apis:google-api-services-drive:v3-rev20220815-2.0.0") {
@@ -121,5 +121,5 @@ dependencies {
     implementation("androidx.pdf:pdf-viewer-fragment:1.0.0-alpha04")
     implementation("androidx.appcompat:appcompat:1.7.0") // Required for Fragment support
     // ADD THIS LINE (Required for the PDF Viewer's internal UI elements)
-    implementation("com.google.android.material:material:1.12.0")
+    implementation(libs.material)
 }

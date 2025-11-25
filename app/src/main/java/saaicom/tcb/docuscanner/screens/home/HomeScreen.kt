@@ -429,7 +429,7 @@ fun ActionButton(
         modifier = Modifier
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
-                indication = rememberRipple(bounded = true),
+                //indication = rememberRipple(bounded = true),
                 onClick = onClick)
             .padding(4.dp)
             .width(IntrinsicSize.Min)
@@ -529,7 +529,7 @@ fun MultipleFileSelectionDialog(
                                     .fillMaxWidth()
                                     .clickable (
                                         interactionSource = remember { MutableInteractionSource() },
-                                        indication = rememberRipple(bounded = true),
+                                        //indication = rememberRipple(bounded = true),
                                         onClick = {
                                             if (isSelected) {
                                                 selectedUris = selectedUris - file.uri

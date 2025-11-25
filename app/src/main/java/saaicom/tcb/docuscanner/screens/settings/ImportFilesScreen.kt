@@ -1,8 +1,10 @@
 package saaicom.tcb.docuscanner.screens.settings
 
-import android.os.Environment // *** ADDED IMPORT ***
+import android.app.Activity // Add for Sign-in result
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult // Add for Sign-in
+import androidx.activity.result.contract.ActivityResultContracts // Add for Sign-in
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -13,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
@@ -26,40 +29,71 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
+import com.google.android.gms.auth.api.signin.GoogleSignIn // Add for Sign-in
+import com.google.android.gms.common.api.ApiException // Add for Sign-in
+import kotlinx.coroutines.launch
 import saaicom.tcb.docuscanner.DriveRepository
 import com.google.api.services.drive.model.File as DriveFile
 import java.io.File
+import android.os.Environment
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ImportFilesScreen(navController: NavController) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope() // Scope for launching coroutines
     val driveService by DriveRepository.driveService.collectAsState()
 
     // --- Navigation State ---
+    // Start explicitly at "root" (My Drive) when signed in
     var currentFolderId by remember { mutableStateOf<String?>(null) }
-    var currentFolderName by remember { mutableStateOf("DocuScanner Backup") }
+    var currentFolderName by remember { mutableStateOf("My Drive") } // Default to My Drive for top level
     var navigationStack by remember { mutableStateOf(listOf<Pair<String, String>>()) }
 
     // --- Data State ---
     var allFiles by remember { mutableStateOf<List<DriveFile>>(emptyList()) }
     var filteredFiles by remember { mutableStateOf<List<DriveFile>>(emptyList()) }
     var selectedFiles by remember { mutableStateOf<Map<String, DriveFile>>(emptyMap()) }
-    var searchQuery by remember { mutableStateOf("") }
-    var isLoading by remember { mutableStateOf(true) }
 
-    // 1. Initial Load: Find DocuScanner Folder
+    var searchQuery by remember { mutableStateOf("") }
+    // Initial loading state only active if we are actively trying to load files after sign-in
+    var isLoading by remember { mutableStateOf(driveService != null) }
+
+    // Launcher for Google Sign-In
+    val googleSignInLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+            try {
+                val account = task.getResult(ApiException::class.java)
+                if (account != null) {
+                    scope.launch {
+                        DriveRepository.initialize(context, account)
+                        // Initialization will update driveService, triggering LaunchedEffect(driveService)
+                    }
+                }
+            } catch (e: ApiException) {
+                Toast.makeText(context, "Sign-in failed: ${e.statusCode}", Toast.LENGTH_LONG).show()
+                isLoading = false
+            }
+        } else {
+            Toast.makeText(context, "Sign-in cancelled.", Toast.LENGTH_SHORT).show()
+            isLoading = false
+        }
+    }
+
+
+    // 1. Initial Load: Try to set currentFolderId to "root" or the dedicated folder.
     LaunchedEffect(driveService) {
         val service = driveService
         if (service != null && currentFolderId == null) {
             isLoading = true
-            val folderId = DriveRepository.findOrCreateDocuScannerFolder(service)
-            if (folderId != null) {
-                currentFolderId = folderId
-            } else {
-                Toast.makeText(context, "Backup folder not found", Toast.LENGTH_SHORT).show()
-                isLoading = false
-            }
+            // Setting currentFolderId to "root" to start browsing My Drive, as "Import" might be general.
+            currentFolderId = "root"
+            currentFolderName = "My Drive"
+        } else if (service == null) {
+            isLoading = false
         }
     }
 
@@ -69,6 +103,7 @@ fun ImportFilesScreen(navController: NavController) {
         val folderId = currentFolderId
         if (service != null && folderId != null) {
             isLoading = true
+            // Use loadDriveFiles which filters for folders and PDFs
             allFiles = DriveRepository.loadDriveFiles(service, folderId)
             filteredFiles = allFiles
             isLoading = false
@@ -143,25 +178,25 @@ fun ImportFilesScreen(navController: NavController) {
                     }
                 },
                 actions = {
-                    TextButton(onClick = { toggleSelectAll() }) {
-                        Text("Select All")
+                    if (driveService != null) { // Only show Select All if connected
+                        TextButton(onClick = { toggleSelectAll() }) {
+                            Text("Select All")
+                        }
                     }
                 }
             )
         },
         floatingActionButton = {
-            if (selectedFiles.isNotEmpty()) {
+            if (driveService != null && selectedFiles.isNotEmpty()) {
                 ExtendedFloatingActionButton(
                     onClick = {
                         val filesToImport = selectedFiles.values.toList()
 
-                        // *** FIX: Write to App-Specific Storage (Guaranteed Writable) ***
-                        // This resolves the "Failed 1" / Permission Denied error.
-                        // Ensure your FilesScreen reads from context.getExternalFilesDir(null)
+                        // Use the existing logic to find the local file target folder
                         val targetFolder = context.getExternalFilesDir(null)
                             ?: File(context.filesDir, ".")
 
-                        // Pass this folder to the repository
+                        // Start the import process
                         DriveRepository.startImport(filesToImport, targetFolder)
 
                         Toast.makeText(context, "Importing ${filesToImport.size} files...", Toast.LENGTH_SHORT).show()
@@ -178,69 +213,96 @@ fun ImportFilesScreen(navController: NavController) {
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
-                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                placeholder = { Text("Search files...") },
-                leadingIcon = { Icon(Icons.Default.Search, null) },
-                trailingIcon = {
-                    if (searchQuery.isNotEmpty()) {
-                        IconButton(onClick = { searchQuery = "" }) { Icon(Icons.Default.Close, null) }
+            if (driveService == null) {
+                // *** DISPLAY SIGN-IN BUTTON IF NOT CONNECTED ***
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            "Connect to Google Drive to import files.",
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.padding(bottom = 16.dp)
+                        )
+                        Button(
+                            onClick = {
+                                isLoading = true // Show loading while auth flow is active
+                                val signInClient = DriveRepository.getGoogleSignInClient(context)
+                                googleSignInLauncher.launch(signInClient.signInIntent)
+                            },
+                            // Use the cloud icon for connecting
+                            content = {
+                                Icon(Icons.Default.Cloud, contentDescription = null)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Sign in with Google")
+                            }
+                        )
                     }
-                },
-                singleLine = true
-            )
-
-            if (isLoading) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
-                }
-            } else if (filteredFiles.isEmpty()) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("No backup files found.")
                 }
             } else {
-                LazyColumn(modifier = Modifier.fillMaxSize()) {
-                    items(filteredFiles) { file ->
-                        val isFolder = file.mimeType == "application/vnd.google-apps.folder"
-                        val isSelected = selectedFiles.containsKey(file.id)
+                // *** DISPLAY FILE LIST IF CONNECTED ***
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    placeholder = { Text("Search files...") },
+                    leadingIcon = { Icon(Icons.Default.Search, null) },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) { Icon(Icons.Default.Close, null) }
+                        }
+                    },
+                    singleLine = true
+                )
 
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = LocalIndication.current
-                                ) {
-                                    if (isFolder) {
-                                        navigateToFolder(file)
-                                    } else {
-                                        toggleSelection(file)
+                if (isLoading) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
+                    }
+                } else if (filteredFiles.isEmpty()) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("No files or folders found.")
+                    }
+                } else {
+                    LazyColumn(modifier = Modifier.fillMaxSize()) {
+                        items(filteredFiles) { file ->
+                            val isFolder = file.mimeType == "application/vnd.google-apps.folder"
+                            val isSelected = selectedFiles.containsKey(file.id)
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = LocalIndication.current
+                                    ) {
+                                        if (isFolder) {
+                                            navigateToFolder(file)
+                                        } else {
+                                            toggleSelection(file)
+                                        }
                                     }
+                                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (isFolder) {
+                                    Icon(Icons.Default.Folder, "Folder", tint = MaterialTheme.colorScheme.secondary)
+                                } else {
+                                    Icon(
+                                        imageVector = if (isSelected) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
+                                        contentDescription = "Select",
+                                        tint = if (isSelected) MaterialTheme.colorScheme.primary else Color.Gray
+                                    )
                                 }
-                                .padding(horizontal = 16.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            if (isFolder) {
-                                Icon(Icons.Default.Folder, "Folder", tint = MaterialTheme.colorScheme.secondary)
-                            } else {
-                                Icon(
-                                    imageVector = if (isSelected) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
-                                    contentDescription = "Select",
-                                    tint = if (isSelected) MaterialTheme.colorScheme.primary else Color.Gray
+                                Spacer(modifier = Modifier.width(16.dp))
+                                Text(
+                                    text = file.name ?: "Unnamed",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
                                 )
                             }
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Text(
-                                text = file.name ?: "Unnamed",
-                                style = MaterialTheme.typography.bodyLarge,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f)
-                            )
+                            HorizontalDivider(modifier = Modifier.padding(start = 56.dp))
                         }
-                        HorizontalDivider(modifier = Modifier.padding(start = 56.dp))
                     }
                 }
             }
