@@ -31,7 +31,7 @@ public class TextDetectionModel_EAST extends TextDetectionModel {
      * @param network Net object
      */
     public TextDetectionModel_EAST(Net network) {
-        super(TextDetectionModel_EAST_0(network.nativeObj));
+        super(TextDetectionModel_EAST_0(network.getNativeObjAddr()));
     }
 
 

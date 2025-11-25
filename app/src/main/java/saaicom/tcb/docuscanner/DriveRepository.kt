@@ -1,6 +1,7 @@
 package saaicom.tcb.docuscanner
 
 import android.content.Context
+import android.os.Environment
 import android.util.Log
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount
@@ -9,120 +10,203 @@ import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.common.api.Scope
 import com.google.api.client.extensions.android.http.AndroidHttp
 import com.google.api.client.googleapis.extensions.android.gms.auth.GoogleAccountCredential
+import com.google.api.client.http.FileContent
 import com.google.api.client.json.gson.GsonFactory
 import com.google.api.services.drive.Drive
 import com.google.api.services.drive.DriveScopes
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import com.google.api.services.drive.model.File as DriveFile // Alias Drive File
+import com.google.api.services.drive.model.File as DriveFile
+import java.io.File
 import java.io.FileOutputStream
-import java.io.IOException
 import java.io.OutputStream
-
 
 object DriveRepository {
 
     private const val FOLDER_NAME = "DocuScanner"
     private const val FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 
-    // This is the Client ID from your "Web application" type credential
-    // Used for requestServerAuthCode if needed, keep for reference
-    private const val WEB_CLIENT_ID = "YOUR_WEB_CLIENT_ID.apps.googleusercontent.com"
+    // *** SIMPLIFIED SCOPE: Only access files/folders created by THIS app ***
+    private val SCOPES = listOf(DriveScopes.DRIVE_FILE)
 
+    private val repositoryScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-    // StateFlow to hold the Drive service instance
+    private val _isSyncing = MutableStateFlow(false)
+    val isSyncing = _isSyncing.asStateFlow()
+
+    private val _syncStatus = MutableStateFlow("Idle")
+    val syncStatus = _syncStatus.asStateFlow()
+
     private val _driveService = MutableStateFlow<Drive?>(null)
     val driveService = _driveService.asStateFlow()
 
-    // --- Authentication ---
-
-    /**
-     * Initializes the Drive service after successful sign-in.
-     */
     suspend fun initialize(context: Context, account: GoogleSignInAccount) {
         Log.d("DriveRepository", "Initialize called for account: ${account.email}")
-        _driveService.value = getDriveService(context, account)
-        Log.d("DriveRepository", "Initialize complete. Drive service is null: ${_driveService.value == null}")
+        _driveService.value = getDriveService(context.applicationContext, account)
     }
 
-    /**
-     * Clears the Drive service instance on sign-out.
-     */
     fun clear() {
-        Log.d("DriveRepository", "Clear called.")
         _driveService.value = null
-        // TODO: Consider if signing out of GoogleSignIn client is needed here too
+        _syncStatus.value = "Idle"
     }
 
-    /**
-     * Gets the GoogleSignInClient configured for Drive access.
-     */
     fun getGoogleSignInClient(context: Context): GoogleSignInClient {
-        Log.d("DriveRepository", "Building GoogleSignInClient")
         val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
             .requestEmail()
-            .requestScopes(Scope(DriveScopes.DRIVE_FILE)) // Request Drive scope needed by credential
+            // *** SIMPLIFIED: Only asking for DRIVE_FILE ***
+            .requestScopes(Scope(DriveScopes.DRIVE_FILE))
             .build()
         return GoogleSignIn.getClient(context, gso)
     }
 
-
-    /**
-     * Builds the Drive service instance using credentials from the signed-in account.
-     */
     private suspend fun getDriveService(context: Context, account: GoogleSignInAccount): Drive? = withContext(Dispatchers.IO) {
-        Log.d("DriveRepository", "Starting getDriveService for ${account.email}")
-        // First, check if the required scope was granted during sign-in
-        val requiredScope = Scope(DriveScopes.DRIVE_FILE)
-        val hasPermission = GoogleSignIn.hasPermissions(account, requiredScope)
-        Log.d("DriveRepository", "Checking for Drive scope permission: $hasPermission")
-
-        if (!hasPermission) {
-            Log.w("DriveRepository", "Drive scope not granted for account ${account.email}. Cannot build Drive service.")
-            Log.w("DriveRepository", "Granted scopes: ${account.grantedScopes}")
-            return@withContext null
-        }
-        Log.d("DriveRepository", "Drive scope permission confirmed.")
-
         try {
-            Log.d("DriveRepository", "Attempting to create GoogleAccountCredential for ${account.email}")
-            val credential = GoogleAccountCredential.usingOAuth2(
-                context, listOf(DriveScopes.DRIVE_FILE)
-            )
-            Log.d("DriveRepository", "GoogleAccountCredential created.")
+            val credential = GoogleAccountCredential.usingOAuth2(context, SCOPES)
             credential.selectedAccount = account.account
-            Log.d("DriveRepository", "Credential linked to account: ${account.account?.name}")
-
-
-            // Build Drive service
-            Log.d("DriveRepository", "Building Drive service...")
             val transport = AndroidHttp.newCompatibleTransport()
             val jsonFactory = GsonFactory.getDefaultInstance()
-            val service = Drive.Builder(transport, jsonFactory, credential)
+            Drive.Builder(transport, jsonFactory, credential)
                 .setApplicationName("DocuScanner")
                 .build()
-            Log.d("DriveRepository", "Drive service built successfully.")
-            service
         } catch (e: Exception) {
-            Log.e("DriveRepository", "Failed to build GoogleAccountCredential or Drive service", e)
+            Log.e("DriveRepository", "Error building Drive service", e)
             null
+        }
+    }
+
+    // --- Background Sync/Import Functions ---
+
+    fun startSync(context: Context) { // *** ADDED Context parameter ***
+        if (_isSyncing.value) return
+        val service = _driveService.value ?: run {
+            _syncStatus.value = "Not connected to Drive."
+            return
+        }
+
+        repositoryScope.launch {
+            _isSyncing.value = true
+            _syncStatus.value = "Preparing sync..."
+            try {
+                // *** FIX: Use App Storage (Same as Import) ***
+                // previously: Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                val localFolder = context.getExternalFilesDir(null)
+                    ?: File(context.filesDir, ".")
+
+                if (!localFolder.exists()) {
+                    _syncStatus.value = "Local folder not found."
+                    return@launch
+                }
+
+                // ... rest of the function remains the same ...
+                val localFiles = localFolder.listFiles()?.filter {
+                    it.isFile && it.name.endsWith(".pdf", ignoreCase = true)
+                } ?: emptyList()
+
+                // ... (copy the rest of your existing logic here) ...
+
+                if (localFiles.isEmpty()) {
+                    _syncStatus.value = "No local files to sync."
+                    return@launch
+                }
+
+                _syncStatus.value = "Checking Drive folder..."
+                val folderId = findOrCreateDocuScannerFolder(service)
+                if (folderId == null) {
+                    _syncStatus.value = "Failed to access Drive folder."
+                    return@launch
+                }
+
+                val remoteFiles = loadDriveFiles(service, folderId)
+                val remoteFileNames = remoteFiles.map { it.name }.toSet()
+                val filesToUpload = localFiles.filter { !remoteFileNames.contains(it.name) }
+                val totalToUpload = filesToUpload.size
+
+                if (totalToUpload == 0) {
+                    _syncStatus.value = "All files are already synced. ✅"
+                } else {
+                    var uploadCount = 0
+                    var failCount = 0
+                    filesToUpload.forEachIndexed { index, file ->
+                        _syncStatus.value = "Uploading ${index + 1} of $totalToUpload: ${file.name}"
+                        val result = uploadDriveFile(service, folderId, file)
+                        if (result != null) uploadCount++ else failCount++
+                        delay(1000)
+                    }
+                    _syncStatus.value = "Sync complete. Uploaded $uploadCount. Failed $failCount."
+                }
+            } catch (e: Exception) {
+                Log.e("DriveRepository", "Sync failed", e)
+                _syncStatus.value = "Sync failed: ${e.message}"
+            } finally {
+                _isSyncing.value = false
+            }
+        }
+    }
+
+    // Updated startImport accepts a specific targetFolder
+    fun startImport(filesToImport: List<DriveFile>, targetFolder: File) {
+        if (_isSyncing.value) return
+        val service = _driveService.value ?: run {
+            _syncStatus.value = "Not connected to Drive."
+            return
+        }
+
+        repositoryScope.launch {
+            _isSyncing.value = true
+            _syncStatus.value = "Preparing import..."
+            try {
+                if (!targetFolder.exists()) {
+                    targetFolder.mkdirs()
+                }
+
+                val total = filesToImport.size
+                var successCount = 0
+                var failCount = 0
+
+                filesToImport.forEachIndexed { index, driveFile ->
+                    _syncStatus.value = "Importing ${index + 1} of $total: ${driveFile.name}"
+
+                    val localFile = File(targetFolder, driveFile.name ?: "imported_${System.currentTimeMillis()}.pdf")
+
+                    try {
+                        if (driveFile.id != null) {
+                            val outputStream = FileOutputStream(localFile)
+                            val success = downloadDriveFile(service, driveFile.id, outputStream)
+                            if (success) {
+                                successCount++
+                            } else {
+                                failCount++
+                                Log.e("DriveRepository", "Failed to download content for ${driveFile.name}")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        failCount++
+                        Log.e("DriveRepository", "Exception importing ${driveFile.name}", e)
+                    }
+                    delay(500)
+                }
+                _syncStatus.value = "Import complete. Imported $successCount. Failed $failCount."
+            } catch (e: Exception) {
+                Log.e("DriveRepository", "Import failed", e)
+                _syncStatus.value = "Import failed: ${e.message}"
+            } finally {
+                _isSyncing.value = false
+            }
         }
     }
 
     // --- Drive Operations ---
 
-    /**
-     * Finds the "DocuScanner" folder in the user's Drive root, or creates it if not found.
-     * Returns the folder ID or null on error.
-     */
     suspend fun findOrCreateDocuScannerFolder(driveService: Drive): String? = withContext(Dispatchers.IO) {
         val folderName = FOLDER_NAME
         try {
-            // Search for the folder
             val query = "mimeType='$FOLDER_MIME_TYPE' and name='$folderName' and 'root' in parents and trashed=false"
-            Log.d("DriveRepository", "Searching for folder with query: $query")
             val result = driveService.files().list()
                 .setQ(query)
                 .setSpaces("drive")
@@ -130,11 +214,8 @@ object DriveRepository {
                 .execute()
 
             if (result.files.isNotEmpty()) {
-                Log.d("DriveRepository", "Found folder '$folderName' with ID: ${result.files[0].id}")
                 return@withContext result.files[0].id
             } else {
-                // Folder not found, create it
-                Log.d("DriveRepository", "Folder '$folderName' not found, creating...")
                 val fileMetadata = DriveFile().apply {
                     name = folderName
                     mimeType = FOLDER_MIME_TYPE
@@ -142,98 +223,60 @@ object DriveRepository {
                 val createdFolder = driveService.files().create(fileMetadata)
                     .setFields("id")
                     .execute()
-                Log.d("DriveRepository", "Created folder '$folderName' with ID: ${createdFolder.id}")
                 return@withContext createdFolder.id
             }
         } catch (e: Exception) {
-            Log.e("DriveRepository", "Error finding or creating folder '$folderName'", e)
-            return@withContext null // Indicate error
+            return@withContext null
         }
     }
 
-
-    /**
-     * Creates a new subfolder within a specified parent folder on Google Drive.
-     * Returns the created folder object or null on error.
-     */
-    suspend fun createDriveFolder(driveService: Drive, parentFolderId: String, folderName: String): DriveFile? = withContext(Dispatchers.IO) {
+    suspend fun loadDriveFiles(driveService: Drive, folderId: String, nameFilter: String? = null): List<DriveFile> = withContext(Dispatchers.IO) {
         try {
-            Log.d("DriveRepository", "Creating subfolder '$folderName' in parent '$parentFolderId'")
-            val fileMetadata = DriveFile().apply {
-                name = folderName
-                mimeType = FOLDER_MIME_TYPE
-                parents = listOf(parentFolderId)
-            }
-            val createdFolder = driveService.files().create(fileMetadata)
-                .setFields("id, name, mimeType")
-                .execute()
-            Log.d("DriveRepository", "Created subfolder '$folderName' with ID: ${createdFolder.id}")
-            createdFolder
-        } catch (e: Exception) {
-            Log.e("DriveRepository", "Error creating subfolder '$folderName'", e)
-            return@withContext null // Return null on error
-        }
-    }
-
-    /**
-     * Loads files and folders from a specific folder ID on Google Drive, optionally filtering by name.
-     * Returns a list of Drive Files or an empty list on error.
-     */
-    suspend fun loadDriveFiles(
-        driveService: Drive,
-        folderId: String,
-        nameFilter: String? = null // *** ADDED: Name filter parameter ***
-        // TODO: Add date range parameters later
-    ): List<DriveFile> = withContext(Dispatchers.IO) {
-        try {
-            Log.d("DriveRepository", "Loading files from folder ID: $folderId with name filter: '$nameFilter'")
-            // *** UPDATED: Build query string ***
             var queryString = "'$folderId' in parents and trashed=false"
+
+            // Only show Folders and PDF files
+            queryString += " and (mimeType = 'application/vnd.google-apps.folder' or mimeType = 'application/pdf')"
+
             if (!nameFilter.isNullOrBlank()) {
-                // Escape single quotes in the filter text
                 val escapedFilter = nameFilter.replace("'", "\\'")
                 queryString += " and name contains '$escapedFilter'"
             }
-            // TODO: Add date range filters (e.g., " and modifiedTime > 'YYYY-MM-DDTHH:MM:SSZ'")
 
-            Log.d("DriveRepository", "Executing query: $queryString")
-            val result = driveService.files().list()
-                .setQ(queryString) // Use the constructed query
+            val request = driveService.files().list()
+                .setQ(queryString)
                 .setSpaces("drive")
-                .setFields("files(id, name, mimeType)") // Add mimeType
-                .setOrderBy("folder, name") // Optional: Sort folders first, then by name
-                .execute()
-            Log.d("DriveRepository", "Found ${result.files.size} files in folder $folderId matching filter.")
-            result.files ?: emptyList() // Return files or empty list
+                .setFields("files(id, name, mimeType)")
+
+            request.orderBy = "folder, name"
+
+            val result = request.execute()
+            result.files ?: emptyList()
         } catch (e: Exception) {
-            Log.e("DriveRepository", "Error loading files from folder '$folderId'", e)
-            return@withContext emptyList<DriveFile>() // Return empty list on error
+            Log.e("DriveRepository", "Error loading files", e)
+            emptyList()
         }
     }
 
-    /**
-     * Downloads a file from Google Drive to a specified local output stream.
-     * Returns true on success, false on failure.
-     */
+    suspend fun uploadDriveFile(driveService: Drive, parentFolderId: String, localFile: File, mimeType: String = "application/pdf"): String? = withContext(Dispatchers.IO) {
+        try {
+            val fileMetadata = DriveFile().apply {
+                name = localFile.name
+                parents = listOf(parentFolderId)
+            }
+            val mediaContent = FileContent(mimeType, localFile)
+            val uploadedFile = driveService.files().create(fileMetadata, mediaContent).setFields("id").execute()
+            uploadedFile.id
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     suspend fun downloadDriveFile(driveService: Drive, fileId: String, outputStream: OutputStream): Boolean = withContext(Dispatchers.IO) {
         try {
-            Log.d("DriveRepository", "Attempting to download file ID: $fileId")
             driveService.files().get(fileId).executeMediaAndDownloadTo(outputStream)
-            Log.d("DriveRepository", "File download successful for ID: $fileId")
             true
-        } catch (e: IOException) {
-            Log.e("DriveRepository", "Error downloading file ID: $fileId", e)
-            false
         } catch (e: Exception) {
-            Log.e("DriveRepository", "Unexpected error downloading file ID: $fileId", e)
             false
-        } finally {
-            try {
-                outputStream.close() // Ensure stream is closed
-            } catch (e: IOException) {
-                Log.e("DriveRepository", "Error closing output stream for file ID: $fileId", e)
-            }
         }
     }
-
 }

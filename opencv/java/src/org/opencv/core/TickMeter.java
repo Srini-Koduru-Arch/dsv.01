@@ -92,6 +92,42 @@ public class TickMeter {
 
 
     //
+    // C++:  int64 cv::TickMeter::getLastTimeTicks()
+    //
+
+    public long getLastTimeTicks() {
+        return getLastTimeTicks_0(nativeObj);
+    }
+
+
+    //
+    // C++:  double cv::TickMeter::getLastTimeMicro()
+    //
+
+    public double getLastTimeMicro() {
+        return getLastTimeMicro_0(nativeObj);
+    }
+
+
+    //
+    // C++:  double cv::TickMeter::getLastTimeMilli()
+    //
+
+    public double getLastTimeMilli() {
+        return getLastTimeMilli_0(nativeObj);
+    }
+
+
+    //
+    // C++:  double cv::TickMeter::getLastTimeSec()
+    //
+
+    public double getLastTimeSec() {
+        return getLastTimeSec_0(nativeObj);
+    }
+
+
+    //
     // C++:  int64 cv::TickMeter::getCounter()
     //
 
@@ -163,6 +199,18 @@ public class TickMeter {
 
     // C++:  double cv::TickMeter::getTimeSec()
     private static native double getTimeSec_0(long nativeObj);
+
+    // C++:  int64 cv::TickMeter::getLastTimeTicks()
+    private static native long getLastTimeTicks_0(long nativeObj);
+
+    // C++:  double cv::TickMeter::getLastTimeMicro()
+    private static native double getLastTimeMicro_0(long nativeObj);
+
+    // C++:  double cv::TickMeter::getLastTimeMilli()
+    private static native double getLastTimeMilli_0(long nativeObj);
+
+    // C++:  double cv::TickMeter::getLastTimeSec()
+    private static native double getLastTimeSec_0(long nativeObj);
 
     // C++:  int64 cv::TickMeter::getCounter()
     private static native long getCounter_0(long nativeObj);

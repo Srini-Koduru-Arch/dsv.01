@@ -56,7 +56,7 @@ public class ClassificationModel extends Model {
      * @param network Net object.
      */
     public ClassificationModel(Net network) {
-        super(ClassificationModel_2(network.nativeObj));
+        super(ClassificationModel_2(network.getNativeObjAddr()));
     }
 
 

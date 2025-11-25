@@ -3,6 +3,7 @@
 //
 package org.opencv.video;
 
+import org.opencv.dnn.Net;
 import org.opencv.video.Tracker;
 import org.opencv.video.TrackerNano;
 import org.opencv.video.TrackerNano_Params;
@@ -34,7 +35,7 @@ public class TrackerNano extends Tracker {
      * @return automatically generated
      */
     public static TrackerNano create(TrackerNano_Params parameters) {
-        return TrackerNano.__fromPtr__(create_0(parameters.nativeObj));
+        return TrackerNano.__fromPtr__(create_0(parameters.getNativeObjAddr()));
     }
 
     /**
@@ -43,6 +44,21 @@ public class TrackerNano extends Tracker {
      */
     public static TrackerNano create() {
         return TrackerNano.__fromPtr__(create_1());
+    }
+
+
+    //
+    // C++: static Ptr_TrackerNano cv::TrackerNano::create(Net backbone, Net neckhead)
+    //
+
+    /**
+     * Constructor
+     * @param backbone pre-loaded backbone model
+     * @param neckhead pre-loaded neckhead model
+     * @return automatically generated
+     */
+    public static TrackerNano create(Net backbone, Net neckhead) {
+        return TrackerNano.__fromPtr__(create_2(backbone.getNativeObjAddr(), neckhead.getNativeObjAddr()));
     }
 
 
@@ -69,6 +85,9 @@ public class TrackerNano extends Tracker {
     // C++: static Ptr_TrackerNano cv::TrackerNano::create(TrackerNano_Params parameters = TrackerNano::Params())
     private static native long create_0(long parameters_nativeObj);
     private static native long create_1();
+
+    // C++: static Ptr_TrackerNano cv::TrackerNano::create(Net backbone, Net neckhead)
+    private static native long create_2(long backbone_nativeObj, long neckhead_nativeObj);
 
     // C++:  float cv::TrackerNano::getTrackingScore()
     private static native float getTrackingScore_0(long nativeObj);

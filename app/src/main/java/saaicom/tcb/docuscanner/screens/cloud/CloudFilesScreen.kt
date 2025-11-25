@@ -8,7 +8,9 @@ import android.util.Log
 import android.widget.Toast // *** ADDED: Import ***
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.clickable // *** ADDED: Import ***
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -285,7 +287,10 @@ fun DriveFileItemRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onOpen)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = LocalIndication.current,
+                onClick = onOpen)
             // *** UPDATED: Reduced vertical padding ***
             .padding(vertical = 4.dp, horizontal = 7.dp),
         verticalAlignment = Alignment.CenterVertically

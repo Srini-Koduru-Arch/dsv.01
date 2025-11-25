@@ -4,11 +4,10 @@ import android.graphics.Bitmap
 import org.opencv.android.Utils
 import org.opencv.core.*
 import org.opencv.imgproc.Imgproc
-import java.util.Collections
 import kotlin.math.max
-import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.sqrt
+import android.util.Log
 
 class Scanner {
 
@@ -126,10 +125,13 @@ class Scanner {
     fun applyPerspectiveTransform(data: ScannedData): ScannedData {
         val originalBitmap = data.original
         val corners = data.corners ?: return data // No corners, return original data
-
+        val sortedCorners = sortPoints(corners)
         // --- 1. Define Source Points ---
-        val srcPoints = corners.toArray()
-        if (srcPoints.size < 4) return data
+        val srcPoints = sortedCorners.toArray()
+        if (srcPoints.size < 4) {
+            sortedCorners.release() // Clean up
+            return data
+        }
 
         // --- 2. Define Destination Dimensions based on corners ---
         val (tl, tr, br, bl) = srcPoints
@@ -141,6 +143,19 @@ class Scanner {
         val maxWidth = max(topWidth, bottomWidth)
         val maxHeight = max(leftHeight, rightHeight)
 
+        // =======================================================
+        // ===            THE CRASH FIX (Part 1)               ===
+        // =======================================================
+        // If the corners form an invalid shape (e.g., a line or point),
+        // the width or height will be 0, which crashes OpenCV.
+        if (maxWidth < 1 || maxHeight < 1) {
+            Log.e("Scanner", "Invalid crop dimensions: ${maxWidth}x${maxHeight}. Returning original.")
+            sortedCorners.release()
+            // Return the *original* data, not a crash
+            return data.copy(scanned = originalBitmap)
+        }
+        // =======================================================
+
         // --- 3. Define Destination Points for the cropped image ---
         val dstPoints = MatOfPoint2f(
             Point(0.0, 0.0),                     // Top-left
@@ -150,29 +165,50 @@ class Scanner {
         )
 
         // --- 4. Create destination Mat for the cropped image ---
+        // This line is now safe because we checked maxWidth/maxHeight
         val croppedMat = Mat(Size(maxWidth, maxHeight), CvType.CV_8UC4)
 
         // --- 5. Warp Document ---
-        val transform = Imgproc.getPerspectiveTransform(corners, dstPoints)
+        val transform = Imgproc.getPerspectiveTransform(sortedCorners, dstPoints)
+
+        // =======================================================
+        // ===            THE CRASH FIX (Part 2)               ===
+        // =======================================================
+        // Add a try-catch as a final safety net for native OpenCV errors
         val originalMat = Mat()
-        Utils.bitmapToMat(originalBitmap, originalMat)
+        val scannedBitmap: Bitmap
+        try {
+            Utils.bitmapToMat(originalBitmap, originalMat)
+            Imgproc.warpPerspective(originalMat, croppedMat, transform, croppedMat.size(), Imgproc.INTER_LINEAR)
 
-        Imgproc.warpPerspective(originalMat, croppedMat, transform, croppedMat.size(), Imgproc.INTER_LINEAR)
+            // --- 6. Enhance Document ---
+            val enhancedMat = enhanceDocument(croppedMat) // Enhance the cropped image
 
-        // --- 6. Enhance Document ---
-        val enhancedMat = enhanceDocument(croppedMat) // Enhance the cropped image
+            // --- 7. Convert back to Bitmap ---
+            scannedBitmap = Bitmap.createBitmap(enhancedMat.cols(), enhancedMat.rows(), Bitmap.Config.ARGB_8888)
+            Utils.matToBitmap(enhancedMat, scannedBitmap)
 
-        // --- 7. Convert back to Bitmap ---
-        val scannedBitmap = Bitmap.createBitmap(enhancedMat.cols(), enhancedMat.rows(), Bitmap.Config.ARGB_8888)
-        Utils.matToBitmap(enhancedMat, scannedBitmap)
+            enhancedMat.release() // Release the enhanced mat
+
+        } catch (e: Exception) {
+            Log.e("Scanner", "OpenCV warpPerspective or enhancement failed", e)
+            // Clean up
+            corners.release()
+            dstPoints.release()
+            transform.release()
+            originalMat.release()
+            croppedMat.release()
+            // Return original bitmap on failure
+            return data.copy(scanned = originalBitmap)
+        }
+        // =======================================================
 
         // Clean up
         corners.release()
         dstPoints.release()
         transform.release()
         originalMat.release()
-        croppedMat.release() // Release the intermediate cropped mat
-        enhancedMat.release()
+        croppedMat.release()
 
         return data.copy(scanned = scannedBitmap)
     }
