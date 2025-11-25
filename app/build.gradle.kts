@@ -11,8 +11,8 @@ android {
         applicationId = "saaicom.tcb.docuscanner"
         minSdk = 27
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.07"
+        versionCode = 4
+        versionName = "4.07"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
