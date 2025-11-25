@@ -50,10 +50,9 @@ import saaicom.tcb.docuscanner.screens.sign.PdfSignScreen
 import saaicom.tcb.docuscanner.screens.sign.SignScreen
 import saaicom.tcb.docuscanner.screens.viewer.PdfViewScreen
 import saaicom.tcb.docuscanner.ui.theme.DocuScannerTheme
-import android.content.Intent
-import android.provider.Settings
 import android.os.Environment
 import saaicom.tcb.docuscanner.screens.settings.ImportFilesScreen
+import androidx.fragment.app.FragmentActivity // <--- ADD THIS IMPORT
 
 // Define your routes as constants
 object Routes {
@@ -68,7 +67,7 @@ object Routes {
     const val IMPORT = "import" // for now it is for importing from Google Drive
 }
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() { //ComponentActivity() {
 
     private val _hasStoragePermission = mutableStateOf(false)
     val hasStoragePermission: State<Boolean> = _hasStoragePermission

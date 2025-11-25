@@ -9,7 +9,7 @@ android {
 
     defaultConfig {
         applicationId = "saaicom.tcb.docuscanner"
-        minSdk = 27
+        minSdk = 31
         targetSdk = 35
         versionCode = 4
         versionName = "4.07"
@@ -117,7 +117,9 @@ dependencies {
     implementation(libs.google.api.client.android)
     implementation(libs.google.api.client.gson)
     implementation(libs.google.http.client.android)
-    implementation(libs.mhiew.android.pdf.viewer)
-    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
     implementation("androidx.compose.material:material-icons-extended:1.7.8")
+    implementation("androidx.pdf:pdf-viewer-fragment:1.0.0-alpha04")
+    implementation("androidx.appcompat:appcompat:1.7.0") // Required for Fragment support
+    // ADD THIS LINE (Required for the PDF Viewer's internal UI elements)
+    implementation("com.google.android.material:material:1.12.0")
 }
