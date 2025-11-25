@@ -8,7 +8,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
-import androidx.activity.ComponentActivity
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -51,6 +51,7 @@ import saaicom.tcb.docuscanner.screens.sign.SignScreen
 import saaicom.tcb.docuscanner.screens.viewer.PdfViewScreen
 import saaicom.tcb.docuscanner.ui.theme.DocuScannerTheme
 import android.os.Environment
+import androidx.compose.ui.platform.LocalConfiguration
 import saaicom.tcb.docuscanner.screens.settings.ImportFilesScreen
 import androidx.fragment.app.FragmentActivity // <--- ADD THIS IMPORT
 
@@ -209,16 +210,29 @@ fun DocuScannerApp(requestCameraPermission: () -> Unit, hasStoragePermission: Bo
     val currentRoute = navBackStackEntry?.destination?.route
     val activity = LocalContext.current as? Activity
 
+    val smallestWidthDp = LocalConfiguration.current.smallestScreenWidthDp
 
-    // *** CRITICAL FIX: Safe Orientation Logic ***
+    // 2. Define the threshold for a compact device (phone)
+    val IS_COMPACT_SCREEN = smallestWidthDp < 600 // Android's definition of a phone/compact width
+
     LaunchedEffect(currentRoute, activity) {
         if (activity == null) return@LaunchedEffect
 
-        // Only enforce Portrait if we are NOT in Sign mode
-        if (currentRoute != Routes.SIGN) {
-            // CHECK first. Only set if different. This prevents the crash loop.
-            if (activity.requestedOrientation != ActivityInfo.SCREEN_ORIENTATION_PORTRAIT) {
-                activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        if (IS_COMPACT_SCREEN) {
+            // 1. SMALL DEVICE (Phone): Enforce Portrait lock for all screens except SIGN
+            val targetOrientation = if (currentRoute == Routes.SIGN) {
+                ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            } else {
+                ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            }
+
+            if (activity.requestedOrientation != targetOrientation) {
+                activity.requestedOrientation = targetOrientation
+            }
+        } else {
+            // 2. LARGE DEVICE (Tablet/Foldable): Allow OS to manage orientation
+            if (activity.requestedOrientation != ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
+                activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
             }
         }
         // We let SignScreen handle its own forcing to Landscape
@@ -388,7 +402,7 @@ fun AdBanner(adUnitId: String, modifier: Modifier = Modifier) {
 
     AndroidView(
         factory = { adView },
-        modifier = modifier.windowInsetsPadding(WindowInsets.statusBars)
+        modifier = modifier.statusBarsPadding() //modifier.windowInsetsPadding(WindowInsets.statusBars)
     )
 }
 

@@ -18,6 +18,7 @@ activityCompose = "1.9.3"
 composeBom = "2024.04.01"
 lifecycleRuntimeKtxVersion = "2.9.2"
 lifecycleViewmodelCompose = "2.9.2"
+material = "1.13.0"
 materialIconsExtended = "1.7.7"
 navigationCompose = "2.8.8"
 navigationRuntimeKtx = "2.8.8"
@@ -30,6 +31,8 @@ google-api-client = "2.2.0"
 google-http-client = "1.42.3"
 ui = "1.9.4"
 uiUnit = "1.9.4"
+window = "1.5.1"
+material3WindowSizeClass = "1.4.0"
 #androidPdfViewer = "3.2.0-beta.3"
 
 [libraries]
@@ -68,6 +71,7 @@ androidx-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-toolin
 androidx-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-manifest" }
 androidx-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4" }
 androidx-material3 = { group = "androidx.compose.material3", name = "material3" }
+material = { module = "com.google.android.material:material", version.ref = "material" }
 material3 = { module = "androidx.compose.material3:material3" }
 mhiew-android-pdf-viewer = { module = "com.github.mhiew:android-pdf-viewer", version.ref = "androidPdfViewerVersion" }
 play-services-auth = { group = "com.google.android.gms", name = "play-services-auth", version.ref = "play.service.auth" }
@@ -79,6 +83,8 @@ play-services-ads-api = { group = "com.google.android.gms", name = "play-service
 #play-services-ads-lite = { group = "com.google.android.gms", name = "play-services-ads-lite", version.ref = "playServicesAdsLite" }
 androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
 androidx-compose-ui-unit = { group = "androidx.compose.ui", name = "ui-unit", version.ref = "uiUnit" }
+androidx-window = { group = "androidx.window", name = "window", version.ref = "window" }
+androidx-compose-material3-window-size-class1 = { group = "androidx.compose.material3", name = "material3-window-size-class", version.ref = "material3WindowSizeClass" }
 #play-services-identity = { group = "com.google.android.gms", name = "play-services-identity", version.ref = "play-services-identity" }
 #android-pdf-viewer = { group = "com.github.barteksc", name = "android-pdf-viewer", version.ref = "androidPdfViewer" }
 

@@ -33,3 +33,9 @@
 -dontwarn org.ietf.jgss.GSSManager
 -dontwarn org.ietf.jgss.GSSName
 -dontwarn org.ietf.jgss.Oid
+# Remove all logging calls in the final release build
+#-assumenosideeffects class android.util.Log {
+#   public static *** d(...);
+#    public static *** v(...);
+#    public static *** i(...); # Only if you want to remove info logs as well
+#}

@@ -56,7 +56,7 @@ fun LocalFileRow(
             .combinedClickable(
                 // *** M2/M3 CRASH FIX: Use rememberRipple() instead of LocalIndication.current ***
                 interactionSource = remember { MutableInteractionSource() },
-                indication = rememberRipple(bounded = true), // <--- FIXED LINE
+                //indication = rememberRipple(bounded = true), // <--- FIXED LINE
                 onClick = {
                     if (selectionMode) {
                         onToggleSelection()
