@@ -63,7 +63,7 @@ public class Model {
      * @param network Net object.
      */
     public Model(Net network) {
-        nativeObj = Model_2(network.nativeObj);
+        nativeObj = Model_2(network.getNativeObjAddr());
     }
 
 

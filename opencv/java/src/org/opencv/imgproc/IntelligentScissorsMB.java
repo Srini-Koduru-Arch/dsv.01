@@ -262,7 +262,7 @@ public class IntelligentScissorsMB {
      *
      * @param targetPt The target point
      * @param contour The list of pixels which contains optimal path between the source and the target points of the image. Type is CV_32SC2 (compatible with {@code std::vector&lt;Point&gt;})
-     * @param backward Flag to indicate reverse order of retrived pixels (use "true" value to fetch points from the target to the source point)
+     * @param backward Flag to indicate reverse order of retrieved pixels (use "true" value to fetch points from the target to the source point)
      */
     public void getContour(Point targetPt, Mat contour, boolean backward) {
         getContour_0(nativeObj, targetPt.x, targetPt.y, contour.nativeObj, backward);

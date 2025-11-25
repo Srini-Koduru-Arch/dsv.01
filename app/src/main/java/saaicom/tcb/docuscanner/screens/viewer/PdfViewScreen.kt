@@ -97,17 +97,20 @@ fun PdfViewScreen(
                         Icon(Icons.Default.ArrowBack, contentDescription = "Back")
                     }
                 },
-                modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars)
+                //modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars)
+                // FIX 1: Remove Top Padding (Status Bar inset)
+                windowInsets = WindowInsets(0.dp)
             )
         },
         bottomBar = {
             BottomAppBar(
-                modifier = Modifier.windowInsetsPadding(WindowInsets.navigationBars),
+                //modifier = Modifier.windowInsetsPadding(WindowInsets.navigationBars),
+                windowInsets = WindowInsets(0.dp)
             ) {
                 if (pageCount > 0) {
                     Text(
                         "Page ${currentPage + 1} of $pageCount",
-                        modifier = Modifier.padding(horizontal = 16.dp)
+                        modifier = Modifier.padding(horizontal = 7.dp)
                     )
                 }
                 Spacer(modifier = Modifier.weight(1f))
@@ -119,7 +122,7 @@ fun PdfViewScreen(
                     Icon(Icons.Default.Draw, contentDescription = "Sign")
                 }
                 IconButton(onClick = {
-                    FileActions.emailPdfFile(context, fileName, pdfUri)
+                    FileActions.sharePdfFiles(context, listOf(pdfUri))
                 }) {
                     Icon(Icons.Default.Share, contentDescription = "Share")
                 }

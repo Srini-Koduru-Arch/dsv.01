@@ -83,7 +83,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         init {
-            if (!OpenCVLoader.initDebug()) {
+            if (!OpenCVLoader.initLocal()) {
                 Log.e("MainActivity", "OpenCV initialization failed!")
             } else {
                 Log.d("MainActivity", "OpenCV initialization succeeded!")
@@ -102,30 +102,27 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // Launcher for multiple permissions
+    // Standard launcher for multiple permissions
     private val requestStoragePermissionsLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
-        // Check for read permission (all versions)
-        val readImagesGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            permissions[Manifest.permission.READ_MEDIA_IMAGES] ?: false
+        // Check for read permission (handles both READ_EXTERNAL_STORAGE and READ_MEDIA_IMAGES)
+        val readGranted = permissions[Manifest.permission.READ_EXTERNAL_STORAGE] == true ||
+                permissions[Manifest.permission.READ_MEDIA_IMAGES] == true
+
+        // Write permission is implicitly granted on Android 10+ (API 29+), so we assume true if not found
+        val writeGranted = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            permissions[Manifest.permission.WRITE_EXTERNAL_STORAGE] == true
         } else {
-            permissions[Manifest.permission.READ_EXTERNAL_STORAGE] ?: false
+            true
         }
 
-        // Check for write permission (only needed for API < 29)
-        val writeExternalGranted = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-            permissions[Manifest.permission.WRITE_EXTERNAL_STORAGE] ?: false
-        } else {
-            true // Not needed on API 29+ (Scoped Storage), so treat as "granted"
-        }
-
-        _hasStoragePermission.value = readImagesGranted && writeExternalGranted
+        _hasStoragePermission.value = readGranted && writeGranted
 
         if (_hasStoragePermission.value) {
-            Log.d("MainActivity", "All necessary storage permissions granted. ✅")
+            Log.d("MainActivity", "Storage permissions granted. ✅")
         } else {
-            Log.w("MainActivity", "Storage permissions denied. Read: $readImagesGranted, Write: $writeExternalGranted ❌")
+            Log.w("MainActivity", "Storage permissions denied. ❌")
         }
     }
 
@@ -173,43 +170,30 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun requestStoragePermissions() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            // Android 11+ (API 30+): Request MANAGE_EXTERNAL_STORAGE
-            if (Environment.isExternalStorageManager()) {
-                _hasStoragePermission.value = true
-                Log.d("MainActivity", "All Files Access already granted. ✅")
-            } else {
-                Log.i("MainActivity", "Requesting All Files Access. 🚦")
-                try {
-                    val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
-                    intent.addCategory("android.intent.category.DEFAULT")
-                    // FIXED LINE BELOW:
-                    intent.data = Uri.parse("package:${applicationContext.packageName}")
-                    storageManagerLauncher.launch(intent)
-                } catch (e: Exception) {
-                    val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
-                    storageManagerLauncher.launch(intent)
-                }
+        val permissionsToRequest = mutableListOf<String>()
+
+        // 1. Determine which READ permission to ask for
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES) != PackageManager.PERMISSION_GRANTED) {
+                permissionsToRequest.add(Manifest.permission.READ_MEDIA_IMAGES)
             }
         } else {
-            // Android 10 and below: Use standard runtime permissions
-            val permissionsToRequest = mutableListOf<String>()
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
                 permissionsToRequest.add(Manifest.permission.READ_EXTERNAL_STORAGE)
             }
-            // WRITE permission is only needed for Android 9 (Pie) and lower, strictly speaking,
-            // but we request it for 10 just in case legacy flags are used.
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-                if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-                    permissionsToRequest.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                }
-            }
+        }
 
-            if (permissionsToRequest.isNotEmpty()) {
-                requestStoragePermissionsLauncher.launch(permissionsToRequest.toTypedArray())
-            } else {
-                _hasStoragePermission.value = true
+        // 2. Determine if we need WRITE permission (only for Android < 10)
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                permissionsToRequest.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
             }
+        }
+
+        if (permissionsToRequest.isNotEmpty()) {
+            requestStoragePermissionsLauncher.launch(permissionsToRequest.toTypedArray())
+        } else {
+            _hasStoragePermission.value = true
         }
     }
 }
@@ -225,6 +209,7 @@ fun DocuScannerApp(requestCameraPermission: () -> Unit, hasStoragePermission: Bo
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
     val activity = LocalContext.current as? Activity
+
 
     // *** CRITICAL FIX: Safe Orientation Logic ***
     LaunchedEffect(currentRoute, activity) {
@@ -413,21 +398,42 @@ fun DocuScannerBottomNavigationBar(navController: NavController) {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
-    val navigateToScreen = { destinationRoute: String ->
+    // Standard navigation logic for other screens (Files, Camera, Sign)
+    val navigateToOtherScreen = { destinationRoute: String ->
         navController.navigate(destinationRoute) {
+            // Pop up to the start destination to clear out the inner back stack of the current tab
             popUpTo(navController.graph.findStartDestination().id) {
+                // Save state of the current tab's content
                 saveState = true
             }
+            // Prevent multiple copies of the same destination
             launchSingleTop = true
+            // Restore state of the destination tab if it was saved
             restoreState = true
         }
     }
 
-    // Helper for Safe Navigation (No State Restore for Settings to prevent crash)
+    // Navigation logic for Home (the start destination)
+    val navigateToHome = {
+        navController.navigate(Routes.HOME) {
+            // Pop all destinations up to the Home route itself
+            popUpTo(Routes.HOME) {
+                // Inclusive = false means: pop everything *except* the Home route itself,
+                // ensuring a clean stack with only the Home route visible.
+                inclusive = false
+            }
+            launchSingleTop = true
+            // Setting restoreState to false (or omitting it) guarantees you land on a fresh Home.
+            restoreState = false
+        }
+    }
+
+    // Navigation logic for Settings (which you previously identified as having a crash risk with restoreState)
     val navigateToSettingsSafe = {
         navController.navigate(Routes.SETTINGS) {
             popUpTo(navController.graph.findStartDestination().id)
             launchSingleTop = true
+            restoreState = false // Explicitly set to false for safety
         }
     }
 
@@ -439,7 +445,7 @@ fun DocuScannerBottomNavigationBar(navController: NavController) {
             icon = { Icon(Icons.Filled.Home, contentDescription = "Home") },
             label = { Text("Home") },
             selected = currentRoute == Routes.HOME,
-            onClick = { navigateToScreen(Routes.HOME) },
+            onClick = navigateToHome, // *** Use the new dedicated logic ***
             colors = NavigationBarItemDefaults.colors(
                 selectedIconColor = Color.White,
                 selectedTextColor = Color.White,
@@ -452,7 +458,7 @@ fun DocuScannerBottomNavigationBar(navController: NavController) {
             icon = { Icon(Icons.Filled.List, contentDescription = "Files") },
             label = { Text("Files") },
             selected = currentRoute == Routes.FILES,
-            onClick = { navigateToScreen(Routes.FILES) },
+            onClick = { navigateToOtherScreen(Routes.FILES) },
             colors = NavigationBarItemDefaults.colors(
                 selectedIconColor = Color.White,
                 selectedTextColor = Color.White,
@@ -465,7 +471,7 @@ fun DocuScannerBottomNavigationBar(navController: NavController) {
             icon = { Icon(Icons.Filled.PhotoCamera, contentDescription = "Camera") },
             label = { Text("Camera") },
             selected = currentRoute == Routes.CAMERA,
-            onClick = { navigateToScreen(Routes.CAMERA) },
+            onClick = { navigateToOtherScreen(Routes.CAMERA) },
             colors = NavigationBarItemDefaults.colors(
                 selectedIconColor = Color.White,
                 selectedTextColor = Color.White,
@@ -479,7 +485,7 @@ fun DocuScannerBottomNavigationBar(navController: NavController) {
             icon = { Icon(Icons.Filled.Draw, contentDescription = "Sign") },
             label = { Text("Sign") },
             selected = currentRoute == Routes.SIGN,
-            onClick = { navigateToScreen(Routes.SIGN) },
+            onClick = { navigateToOtherScreen(Routes.SIGN) },
             colors = NavigationBarItemDefaults.colors(
                 selectedIconColor = Color.White,
                 selectedTextColor = Color.White,
@@ -493,9 +499,7 @@ fun DocuScannerBottomNavigationBar(navController: NavController) {
             icon = { Icon(Icons.Filled.Settings, contentDescription = "Settings") },
             label = { Text("Settings") },
             selected = currentRoute == Routes.SETTINGS,
-            // *** CRITICAL FIX: Use Safe Navigation for Settings ***
-            onClick = { navigateToSettingsSafe() },
-            //onClick = { navigateToScreen(Routes.SETTINGS) },
+            onClick = navigateToSettingsSafe,
             colors = NavigationBarItemDefaults.colors(
                 selectedIconColor = Color.White,
                 selectedTextColor = Color.White,

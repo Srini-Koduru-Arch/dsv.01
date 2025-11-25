@@ -37,7 +37,7 @@ public class TextDetectionModel_DB extends TextDetectionModel {
      * @param network Net object.
      */
     public TextDetectionModel_DB(Net network) {
-        super(TextDetectionModel_DB_0(network.nativeObj));
+        super(TextDetectionModel_DB_0(network.getNativeObjAddr()));
     }
 
 

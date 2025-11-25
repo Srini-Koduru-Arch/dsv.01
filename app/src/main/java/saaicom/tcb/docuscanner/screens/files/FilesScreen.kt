@@ -19,18 +19,19 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
 import androidx.navigation.NavController
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import saaicom.tcb.docuscanner.FileActions
+import saaicom.tcb.docuscanner.Routes
 import saaicom.tcb.docuscanner.models.FileItem
 import saaicom.tcb.docuscanner.ui.components.DeleteConfirmationDialog
 import saaicom.tcb.docuscanner.ui.components.LocalFileRow
-import saaicom.tcb.docuscanner.utils.FileUtils.loadLocalFiles
-import kotlinx.coroutines.delay
-import saaicom.tcb.docuscanner.Routes
 import saaicom.tcb.docuscanner.ui.components.RenameFileDialog
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.io.File // *** Added explicit import for File ***
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -49,33 +50,72 @@ fun FilesScreen(navController: NavController) {
 
     var fileToRename by remember { mutableStateOf<FileItem?>(null) }
 
-
-    // Function to reload files
+    // --- Loading Logic using App Internal Storage ---
     val loadFiles: (String?) -> Unit = { nameFilter ->
         scope.launch {
             isLoading = true
-            files = loadLocalFiles(context, nameFilter)
+
+            // 1. Target the Internal App Storage (Same as Import/Backup)
+            val dir = context.getExternalFilesDir(null)
+
+            // 2. Filter for PDFs
+            val rawFiles = dir?.listFiles()?.filter {
+                it.isFile && it.name.endsWith(".pdf", ignoreCase = true)
+            } ?: emptyList()
+
+            // 3. Apply Name Search Filter
+            val filteredFiles = if (nameFilter.isNullOrBlank()) {
+                rawFiles
+            } else {
+                rawFiles.filter { it.name.contains(nameFilter, ignoreCase = true) }
+            }
+
+            // 4. Map to FileItem
+            // *** FIX: Sort files by date FIRST, then map to FileItem ***
+            files = filteredFiles
+                .sortedByDescending { it.lastModified() }
+                .map { file ->
+                    // Generate secure URI for internal file
+                    val uri = FileProvider.getUriForFile(
+                        context,
+                        "${context.packageName}.provider",
+                        file
+                    )
+
+                    // Construct FileItem using only the properties that exist
+                    FileItem(
+                        name = file.name,
+                        uri = uri,
+                        // Removed 'lastModified' parameter as it doesn't exist in your model
+                        sizeInBytes = file.length()
+                    )
+                }
+
             isLoading = false
         }
     }
 
+    // Load files on initial launch and when search query changes
     LaunchedEffect(searchQuery) {
-        isLoading = true
         if (searchQuery.isNotBlank()) {
-            delay(300)
+            delay(300) // Debounce
         }
-        files = loadLocalFiles(context, searchQuery.ifBlank { null })
-        isLoading = false
+        loadFiles(searchQuery.ifBlank { null })
     }
 
+    // Reset selection when searching
     LaunchedEffect(searchQuery) {
-        selectionMode = false
-        selectedFiles = emptySet()
+        if (searchQuery.isNotEmpty()) {
+            selectionMode = false
+            selectedFiles = emptySet()
+        }
     }
 
     val allFilesSelected = remember(files, selectedFiles) {
         files.isNotEmpty() && selectedFiles.size == files.size
     }
+
+    // --- Dialogs ---
 
     if (showDeleteDialog) {
         DeleteConfirmationDialog(
@@ -86,13 +126,14 @@ fun FilesScreen(navController: NavController) {
                     val success = FileActions.deleteLocalFiles(context, filesToDelete)
                     if (success) {
                         Toast.makeText(context, "File(s) deleted", Toast.LENGTH_SHORT).show()
-                        loadFiles(searchQuery.ifBlank { null })
+                        loadFiles(searchQuery.ifBlank { null }) // Refresh list
                     } else {
                         Toast.makeText(context, "Error deleting file(s)", Toast.LENGTH_SHORT).show()
                     }
                     showDeleteDialog = false
                     filesToDelete = emptyList()
                     selectionMode = false
+                    selectedFiles = emptySet()
                 }
             }
         )
@@ -107,7 +148,7 @@ fun FilesScreen(navController: NavController) {
                     val success = FileActions.renameLocalFile(context, file.uri, newName)
                     if (success) {
                         Toast.makeText(context, "File renamed", Toast.LENGTH_SHORT).show()
-                        loadFiles(searchQuery.ifBlank { null })
+                        loadFiles(searchQuery.ifBlank { null }) // Refresh list
                     } else {
                         Toast.makeText(context, "Error renaming file", Toast.LENGTH_SHORT).show()
                     }
@@ -116,6 +157,8 @@ fun FilesScreen(navController: NavController) {
             }
         )
     }
+
+    // --- UI Layout ---
 
     Column(
         modifier = Modifier
@@ -128,7 +171,10 @@ fun FilesScreen(navController: NavController) {
             onSearchQueryChange = { searchQuery = it },
             selectedCount = selectedFiles.size,
             allFilesSelected = allFilesSelected,
-            onCloseSelection = { selectionMode = false },
+            onCloseSelection = {
+                selectionMode = false
+                selectedFiles = emptySet()
+            },
             onSelectAll = {
                 selectedFiles = if (allFilesSelected) {
                     emptySet()
@@ -143,8 +189,17 @@ fun FilesScreen(navController: NavController) {
                 }
             },
             onShare = {
-                Toast.makeText(context, "Share ${selectedFiles.size} items (Not Implemented)", Toast.LENGTH_SHORT).show()
+                val urisToShare = files
+                    .filter { selectedFiles.contains(it.uri) }
+                    .map { it.uri }
+
+                if (urisToShare.isNotEmpty()) {
+                    FileActions.sharePdfFiles(context, urisToShare)
+                } else {
+                    Toast.makeText(context, "No files selected.", Toast.LENGTH_SHORT).show()
+                }
                 selectionMode = false
+                selectedFiles = emptySet()
             }
         )
 
@@ -155,7 +210,7 @@ fun FilesScreen(navController: NavController) {
         } else if (files.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
-                    if (searchQuery.isBlank()) "No local files found in Downloads/DocuScanner."
+                    if (searchQuery.isBlank()) "No files found."
                     else "No results found for '$searchQuery'."
                 )
             }
@@ -195,7 +250,8 @@ fun FilesScreen(navController: NavController) {
                         },
                         onRename = {
                             fileToRename = file
-                        }
+                        },
+                        onShare = { FileActions.shareSinglePdfFile(context, file.uri) }
                     )
                     HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
                 }
@@ -270,5 +326,3 @@ private fun SearchOrSelectionBar(
         }
     }
 }
-
-// *** REMOVED: All duplicate helper functions ***

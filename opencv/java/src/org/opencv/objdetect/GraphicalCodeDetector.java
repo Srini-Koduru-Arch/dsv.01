@@ -216,6 +216,74 @@ public class GraphicalCodeDetector {
     }
 
 
+    //
+    // C++:  NativeByteArray cv::GraphicalCodeDetector::detectAndDecode(Mat img, Mat& points = Mat(), Mat& straight_code = Mat())
+    //
+
+    public byte[] detectAndDecodeBytes(Mat img, Mat points, Mat straight_code) {
+        return detectAndDecodeBytes_0(nativeObj, img.nativeObj, points.nativeObj, straight_code.nativeObj);
+    }
+
+    public byte[] detectAndDecodeBytes(Mat img, Mat points) {
+        return detectAndDecodeBytes_1(nativeObj, img.nativeObj, points.nativeObj);
+    }
+
+    public byte[] detectAndDecodeBytes(Mat img) {
+        return detectAndDecodeBytes_2(nativeObj, img.nativeObj);
+    }
+
+
+    //
+    // C++:  NativeByteArray cv::GraphicalCodeDetector::decode(Mat img, Mat points, Mat& straight_code = Mat())
+    //
+
+    public byte[] decodeBytes(Mat img, Mat points, Mat straight_code) {
+        return decodeBytes_0(nativeObj, img.nativeObj, points.nativeObj, straight_code.nativeObj);
+    }
+
+    public byte[] decodeBytes(Mat img, Mat points) {
+        return decodeBytes_1(nativeObj, img.nativeObj, points.nativeObj);
+    }
+
+
+    //
+    // C++:  bool cv::GraphicalCodeDetector::decodeMulti(Mat img, Mat points, vector_NativeByteArray& decoded_info, vector_Mat& straight_code = vector_Mat())
+    //
+
+    public boolean decodeBytesMulti(Mat img, Mat points, List<byte[]> decoded_info, List<Mat> straight_code) {
+        Mat straight_code_mat = new Mat();
+        boolean retVal = decodeBytesMulti_0(nativeObj, img.nativeObj, points.nativeObj, decoded_info, straight_code_mat.nativeObj);
+        Converters.Mat_to_vector_Mat(straight_code_mat, straight_code);
+        straight_code_mat.release();
+        return retVal;
+    }
+
+    public boolean decodeBytesMulti(Mat img, Mat points, List<byte[]> decoded_info) {
+        return decodeBytesMulti_1(nativeObj, img.nativeObj, points.nativeObj, decoded_info);
+    }
+
+
+    //
+    // C++:  bool cv::GraphicalCodeDetector::detectAndDecodeMulti(Mat img, vector_NativeByteArray& decoded_info, Mat& points = Mat(), vector_Mat& straight_code = vector_Mat())
+    //
+
+    public boolean detectAndDecodeBytesMulti(Mat img, List<byte[]> decoded_info, Mat points, List<Mat> straight_code) {
+        Mat straight_code_mat = new Mat();
+        boolean retVal = detectAndDecodeBytesMulti_0(nativeObj, img.nativeObj, decoded_info, points.nativeObj, straight_code_mat.nativeObj);
+        Converters.Mat_to_vector_Mat(straight_code_mat, straight_code);
+        straight_code_mat.release();
+        return retVal;
+    }
+
+    public boolean detectAndDecodeBytesMulti(Mat img, List<byte[]> decoded_info, Mat points) {
+        return detectAndDecodeBytesMulti_1(nativeObj, img.nativeObj, decoded_info, points.nativeObj);
+    }
+
+    public boolean detectAndDecodeBytesMulti(Mat img, List<byte[]> decoded_info) {
+        return detectAndDecodeBytesMulti_2(nativeObj, img.nativeObj, decoded_info);
+    }
+
+
     @Override
     protected void finalize() throws Throwable {
         delete(nativeObj);
@@ -246,6 +314,24 @@ public class GraphicalCodeDetector {
     private static native boolean detectAndDecodeMulti_0(long nativeObj, long img_nativeObj, List<String> decoded_info, long points_nativeObj, long straight_code_mat_nativeObj);
     private static native boolean detectAndDecodeMulti_1(long nativeObj, long img_nativeObj, List<String> decoded_info, long points_nativeObj);
     private static native boolean detectAndDecodeMulti_2(long nativeObj, long img_nativeObj, List<String> decoded_info);
+
+    // C++:  NativeByteArray cv::GraphicalCodeDetector::detectAndDecode(Mat img, Mat& points = Mat(), Mat& straight_code = Mat())
+    private static native byte[] detectAndDecodeBytes_0(long nativeObj, long img_nativeObj, long points_nativeObj, long straight_code_nativeObj);
+    private static native byte[] detectAndDecodeBytes_1(long nativeObj, long img_nativeObj, long points_nativeObj);
+    private static native byte[] detectAndDecodeBytes_2(long nativeObj, long img_nativeObj);
+
+    // C++:  NativeByteArray cv::GraphicalCodeDetector::decode(Mat img, Mat points, Mat& straight_code = Mat())
+    private static native byte[] decodeBytes_0(long nativeObj, long img_nativeObj, long points_nativeObj, long straight_code_nativeObj);
+    private static native byte[] decodeBytes_1(long nativeObj, long img_nativeObj, long points_nativeObj);
+
+    // C++:  bool cv::GraphicalCodeDetector::decodeMulti(Mat img, Mat points, vector_NativeByteArray& decoded_info, vector_Mat& straight_code = vector_Mat())
+    private static native boolean decodeBytesMulti_0(long nativeObj, long img_nativeObj, long points_nativeObj, List<byte[]> decoded_info, long straight_code_mat_nativeObj);
+    private static native boolean decodeBytesMulti_1(long nativeObj, long img_nativeObj, long points_nativeObj, List<byte[]> decoded_info);
+
+    // C++:  bool cv::GraphicalCodeDetector::detectAndDecodeMulti(Mat img, vector_NativeByteArray& decoded_info, Mat& points = Mat(), vector_Mat& straight_code = vector_Mat())
+    private static native boolean detectAndDecodeBytesMulti_0(long nativeObj, long img_nativeObj, List<byte[]> decoded_info, long points_nativeObj, long straight_code_mat_nativeObj);
+    private static native boolean detectAndDecodeBytesMulti_1(long nativeObj, long img_nativeObj, List<byte[]> decoded_info, long points_nativeObj);
+    private static native boolean detectAndDecodeBytesMulti_2(long nativeObj, long img_nativeObj, List<byte[]> decoded_info);
 
     // native support for java finalize()
     private static native void delete(long nativeObj);

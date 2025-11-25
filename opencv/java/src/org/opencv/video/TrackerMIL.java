@@ -34,7 +34,7 @@ public class TrackerMIL extends Tracker {
      * @return automatically generated
      */
     public static TrackerMIL create(TrackerMIL_Params parameters) {
-        return TrackerMIL.__fromPtr__(create_0(parameters.nativeObj));
+        return TrackerMIL.__fromPtr__(create_0(parameters.getNativeObjAddr()));
     }
 
     /**

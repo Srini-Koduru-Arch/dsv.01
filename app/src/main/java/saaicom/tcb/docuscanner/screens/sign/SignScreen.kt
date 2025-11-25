@@ -58,7 +58,6 @@ import saaicom.tcb.docuscanner.models.FileItem
 import saaicom.tcb.docuscanner.ui.components.DeleteConfirmationDialog
 import saaicom.tcb.docuscanner.ui.components.SelectFileDialog
 import saaicom.tcb.docuscanner.utils.calculateInSampleSize
-import saaicom.tcb.docuscanner.utils.FileUtils.loadLocalFiles
 import saaicom.tcb.docuscanner.utils.rotateBitmap
 import java.io.File
 import java.net.URLEncoder
@@ -68,6 +67,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.combinedClickable
 import kotlin.math.min
 import androidx.compose.foundation.LocalIndication
+import androidx.core.content.FileProvider // Added for safe URI generation
 
 // DATA CLASS TO HOLD PATH AND ITS STYLE
 private data class StyledPath(
@@ -243,13 +243,35 @@ private fun SignatureList(
     onCloseSelection: () -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope() // Added scope
     var showSelectFileDialog by remember { mutableStateOf(false) }
     var localFiles by remember { mutableStateOf<List<FileItem>>(emptyList()) }
     val allSelected = signatures.isNotEmpty() && selectedSignatures.size == signatures.size
     val deleteEnabled = selectedSignatures.isNotEmpty()
 
+    // --- UPDATED: Load files from App Internal Storage ---
     LaunchedEffect(Unit) {
-        localFiles = loadLocalFiles(context)
+        scope.launch {
+            val dir = context.getExternalFilesDir(null)
+            val rawFiles = dir?.listFiles()?.filter {
+                it.isFile && it.name.endsWith(".pdf", ignoreCase = true)
+            } ?: emptyList()
+
+            localFiles = rawFiles
+                .sortedByDescending { it.lastModified() }
+                .map { file ->
+                    val uri = FileProvider.getUriForFile(
+                        context,
+                        "${context.packageName}.provider",
+                        file
+                    )
+                    FileItem(
+                        name = file.name,
+                        uri = uri,
+                        sizeInBytes = file.length()
+                    )
+                }
+        }
     }
 
     if (showSelectFileDialog) {

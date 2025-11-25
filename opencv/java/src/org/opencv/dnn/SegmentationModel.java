@@ -55,7 +55,7 @@ public class SegmentationModel extends Model {
      * @param network Net object.
      */
     public SegmentationModel(Net network) {
-        super(SegmentationModel_2(network.nativeObj));
+        super(SegmentationModel_2(network.getNativeObjAddr()));
     }
 
 

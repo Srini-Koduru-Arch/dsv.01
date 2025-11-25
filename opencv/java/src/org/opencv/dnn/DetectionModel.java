@@ -63,7 +63,7 @@ public class DetectionModel extends Model {
      * @param network Net object.
      */
     public DetectionModel(Net network) {
-        super(DetectionModel_2(network.nativeObj));
+        super(DetectionModel_2(network.getNativeObjAddr()));
     }
 
 

@@ -1,5 +1,6 @@
 package saaicom.tcb.docuscanner.screens.settings
 
+import android.os.Environment // *** ADDED IMPORT ***
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.LocalIndication
@@ -27,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import saaicom.tcb.docuscanner.DriveRepository
 import com.google.api.services.drive.model.File as DriveFile
+import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -35,28 +37,39 @@ fun ImportFilesScreen(navController: NavController) {
     val driveService by DriveRepository.driveService.collectAsState()
 
     // --- Navigation State ---
-    // 1. Start explicitly at "root" (My Drive)
-    var currentFolderId by remember { mutableStateOf("root") }
-    var currentFolderName by remember { mutableStateOf("My Drive") }
+    var currentFolderId by remember { mutableStateOf<String?>(null) }
+    var currentFolderName by remember { mutableStateOf("DocuScanner Backup") }
     var navigationStack by remember { mutableStateOf(listOf<Pair<String, String>>()) }
 
     // --- Data State ---
     var allFiles by remember { mutableStateOf<List<DriveFile>>(emptyList()) }
     var filteredFiles by remember { mutableStateOf<List<DriveFile>>(emptyList()) }
-
-    // 2. Use a Map to store selected files (ID -> File Object)
     var selectedFiles by remember { mutableStateOf<Map<String, DriveFile>>(emptyMap()) }
-
     var searchQuery by remember { mutableStateOf("") }
     var isLoading by remember { mutableStateOf(true) }
 
-    // 3. Load Files whenever currentFolderId changes
+    // 1. Initial Load: Find DocuScanner Folder
+    LaunchedEffect(driveService) {
+        val service = driveService
+        if (service != null && currentFolderId == null) {
+            isLoading = true
+            val folderId = DriveRepository.findOrCreateDocuScannerFolder(service)
+            if (folderId != null) {
+                currentFolderId = folderId
+            } else {
+                Toast.makeText(context, "Backup folder not found", Toast.LENGTH_SHORT).show()
+                isLoading = false
+            }
+        }
+    }
+
+    // 2. Load Files when currentFolderId is set
     LaunchedEffect(driveService, currentFolderId) {
         val service = driveService
-        if (service != null) {
+        val folderId = currentFolderId
+        if (service != null && folderId != null) {
             isLoading = true
-            // Load current folder (root or subfolder)
-            allFiles = DriveRepository.loadDriveFiles(service, currentFolderId)
+            allFiles = DriveRepository.loadDriveFiles(service, folderId)
             filteredFiles = allFiles
             isLoading = false
         }
@@ -95,8 +108,9 @@ fun ImportFilesScreen(navController: NavController) {
     }
 
     fun navigateToFolder(folder: DriveFile) {
-        if (folder.id != null) {
-            navigationStack = navigationStack + (currentFolderId to currentFolderName)
+        val folderId = currentFolderId
+        if (folder.id != null && folderId != null) {
+            navigationStack = navigationStack + (folderId to currentFolderName)
             currentFolderId = folder.id
             currentFolderName = folder.name ?: "Folder"
             searchQuery = ""
@@ -140,8 +154,17 @@ fun ImportFilesScreen(navController: NavController) {
                 ExtendedFloatingActionButton(
                     onClick = {
                         val filesToImport = selectedFiles.values.toList()
-                        DriveRepository.startImport(filesToImport)
-                        Toast.makeText(context, "Import started for ${filesToImport.size} files", Toast.LENGTH_SHORT).show()
+
+                        // *** FIX: Write to App-Specific Storage (Guaranteed Writable) ***
+                        // This resolves the "Failed 1" / Permission Denied error.
+                        // Ensure your FilesScreen reads from context.getExternalFilesDir(null)
+                        val targetFolder = context.getExternalFilesDir(null)
+                            ?: File(context.filesDir, ".")
+
+                        // Pass this folder to the repository
+                        DriveRepository.startImport(filesToImport, targetFolder)
+
+                        Toast.makeText(context, "Importing ${filesToImport.size} files...", Toast.LENGTH_SHORT).show()
                         navController.popBackStack()
                     },
                     icon = { Icon(Icons.Default.Download, null) },
@@ -159,7 +182,7 @@ fun ImportFilesScreen(navController: NavController) {
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
                 modifier = Modifier.fillMaxWidth().padding(16.dp),
-                placeholder = { Text("Search in $currentFolderName...") },
+                placeholder = { Text("Search files...") },
                 leadingIcon = { Icon(Icons.Default.Search, null) },
                 trailingIcon = {
                     if (searchQuery.isNotEmpty()) {
@@ -175,7 +198,7 @@ fun ImportFilesScreen(navController: NavController) {
                 }
             } else if (filteredFiles.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("Empty folder.")
+                    Text("No backup files found.")
                 }
             } else {
                 LazyColumn(modifier = Modifier.fillMaxSize()) {
