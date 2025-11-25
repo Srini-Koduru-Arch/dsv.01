@@ -12,7 +12,7 @@ android {
         minSdk = 27
         targetSdk = 35
         versionCode = 1
-        versionName = "1.0"
+        versionName = "1.07"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -27,13 +27,14 @@ android {
                 // This tells Gradle to pick the first copy of the file it finds
                 // and ignore all other duplicates.
                 pickFirsts.add("**/libc++_shared.so")
+                useLegacyPackaging = false
             }
         }
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

@@ -15,6 +15,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.ripple.rememberRipple
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -28,6 +29,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
 import androidx.navigation.NavController
 import kotlinx.coroutines.launch
 import saaicom.tcb.docuscanner.FileActions
@@ -35,19 +37,19 @@ import saaicom.tcb.docuscanner.Routes
 import saaicom.tcb.docuscanner.SignatureRepository
 import saaicom.tcb.docuscanner.UserData
 import saaicom.tcb.docuscanner.UserDataStore
-import saaicom.tcb.docuscanner.models.FileItem // *** UPDATED IMPORT ***
+import saaicom.tcb.docuscanner.models.FileItem
 import saaicom.tcb.docuscanner.ui.components.DeleteConfirmationDialog
-import saaicom.tcb.docuscanner.ui.components.LocalFileRow // *** UPDATED IMPORT ***
+import saaicom.tcb.docuscanner.ui.components.LocalFileRow
 import saaicom.tcb.docuscanner.ui.components.RenameFileDialog
 import saaicom.tcb.docuscanner.ui.components.SelectFileDialog
-import saaicom.tcb.docuscanner.utils.FileUtils.loadLocalFiles // *** UPDATED IMPORT ***
+import java.io.File
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
 @Composable
 fun HomeScreen(
     navController: NavController,
-    hasStoragePermission: Boolean
+    hasStoragePermission: Boolean,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -67,15 +69,44 @@ fun HomeScreen(
 
     var fileToRename by remember { mutableStateOf<FileItem?>(null) }
 
-    // Function to reload files
+    var showSelectFileForShareDialog by remember { mutableStateOf(false) }
+
+    // --- UPDATED LOADING LOGIC ---
     val reloadFiles = {
         scope.launch {
-            if (hasStoragePermission) {
-                localFiles = loadLocalFiles(context)
-            }
+            // 1. Target the Internal App Storage
+            val dir = context.getExternalFilesDir(null)
+
+            // 2. Filter for PDFs
+            val rawFiles = dir?.listFiles()?.filter {
+                it.isFile && it.name.endsWith(".pdf", ignoreCase = true)
+            } ?: emptyList()
+
+            // 3. Map to FileItem
+            localFiles = rawFiles
+                .sortedByDescending { it.lastModified() } // Sort by date first
+                .map { file ->
+                    val uri = FileProvider.getUriForFile(
+                        context,
+                        "${context.packageName}.provider",
+                        file
+                    )
+                    // Construct FileItem without 'lastModified'
+                    FileItem(
+                        name = file.name,
+                        uri = uri,
+                        sizeInBytes = file.length()
+                    )
+                }
         }
     }
 
+    // Load files on start
+    LaunchedEffect(Unit) {
+        reloadFiles()
+    }
+
+    // Also reload if permission state changes
     LaunchedEffect(hasStoragePermission) {
         reloadFiles()
     }
@@ -163,7 +194,22 @@ fun HomeScreen(
             }
         )
     }
-
+    if (showSelectFileForShareDialog) {
+        MultipleFileSelectionDialog(
+            title = "Select Files to Share (Max 21)",
+            maxSelectionCount = 21,
+            localFiles = localFiles,
+            onDismiss = { showSelectFileForShareDialog = false },
+            onFilesSelected = { fileUris ->
+                showSelectFileForShareDialog = false
+                if (fileUris.isNotEmpty()) {
+                    FileActions.sharePdfFiles(context, fileUris)
+                } else {
+                    Toast.makeText(context, "No files selected to share.", Toast.LENGTH_SHORT).show()
+                }
+            }
+        )
+    }
     if (!userData.termsAccepted) {
         TermsAndConditionsScreen(
             onAccept = {
@@ -187,6 +233,7 @@ fun HomeScreen(
                     showSelectFileDialog = true
                 }
             },
+            onShareClick = { showSelectFileForShareDialog = true },
             onDeleteFile = { fileItem ->
                 filesToDelete = listOf(fileItem)
                 showDeleteDialog = true
@@ -207,17 +254,19 @@ fun MainDashboard(
     searchQuery: String,
     onSearchQueryChange: (String) -> Unit,
     onSignClick: () -> Unit,
+    onShareClick: () -> Unit,
     onDeleteFile: (FileItem) -> Unit,
     onRenameFile: (FileItem) -> Unit
 ) {
     val focusManager = LocalFocusManager.current
+    val context = LocalContext.current
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp)
     ) {
-        TopActionButtons(navController = navController, onSignClick = onSignClick)
+        TopActionButtons(navController = navController, onSignClick = onSignClick, onShareClick = onShareClick)
 
         Spacer(modifier = Modifier.height(16.dp))
 
@@ -241,7 +290,7 @@ fun MainDashboard(
         )
 
         Spacer(modifier = Modifier.height(16.dp))
-        Divider(modifier = Modifier.padding(vertical = 8.dp))
+        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
         LazyColumn(
             modifier = Modifier
@@ -274,9 +323,11 @@ fun MainDashboard(
                                 val encodedUri = URLEncoder.encode(file.uri.toString(), StandardCharsets.UTF_8.toString())
                                 navController.navigate("${Routes.PDF_SIGN.split('/')[0]}/$encodedUri")
                             },
+                            onShare = { FileActions.shareSinglePdfFile(context, file.uri) },
                             onRename = { onRenameFile(file) }
+
                         )
-                        Divider(modifier = Modifier.padding(vertical = 1.dp))
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 1.dp))
                     }
                 }
             } else {
@@ -318,9 +369,10 @@ fun MainDashboard(
                                 val encodedUri = URLEncoder.encode(file.uri.toString(), StandardCharsets.UTF_8.toString())
                                 navController.navigate("${Routes.PDF_SIGN.split('/')[0]}/$encodedUri")
                             },
-                            onRename = { onRenameFile(file) }
+                            onRename = { onRenameFile(file) },
+                            onShare = { FileActions.shareSinglePdfFile(context, file.uri) }
                         )
-                        Divider(modifier = Modifier.padding(vertical = 1.dp))
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 1.dp))
                     }
                 }
             }
@@ -331,7 +383,8 @@ fun MainDashboard(
 @Composable
 fun TopActionButtons(
     navController: NavController,
-    onSignClick: () -> Unit
+    onSignClick: () -> Unit,
+    onShareClick: () -> Unit
 ) {
     val context = LocalContext.current
 
@@ -355,16 +408,12 @@ fun TopActionButtons(
         ActionButton(
             text = "Import",
             icon = Icons.Default.Description,
-            onClick = {
-                Toast.makeText(context, "Import Files - Coming Soon!", Toast.LENGTH_SHORT).show()
-            }
+            onClick = { navController.navigate(Routes.IMPORT) }
         )
         ActionButton(
             text = "Share",
             icon = Icons.Default.Share,
-            onClick = {
-                Toast.makeText(context, "Share - Coming Soon!", Toast.LENGTH_SHORT).show()
-            }
+            onClick = onShareClick
         )
     }
 }
@@ -380,7 +429,7 @@ fun ActionButton(
         modifier = Modifier
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
-                indication = LocalIndication.current,
+                indication = rememberRipple(bounded = true),
                 onClick = onClick)
             .padding(4.dp)
             .width(IntrinsicSize.Min)
@@ -404,6 +453,121 @@ fun ActionButton(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun MultipleFileSelectionDialog(
+    title: String,
+    maxSelectionCount: Int,
+    localFiles: List<FileItem>,
+    onDismiss: () -> Unit,
+    onFilesSelected: (List<Uri>) -> Unit
+) {
+    var searchQuery by remember { mutableStateOf("") }
+    var selectedUris by remember { mutableStateOf(emptySet<Uri>()) }
+    val focusManager = LocalFocusManager.current
+
+    val filteredFiles = remember(searchQuery, localFiles) {
+        if (searchQuery.isBlank()) {
+            localFiles
+        } else {
+            localFiles.filter {
+                it.name?.contains(searchQuery, ignoreCase = true) == true
+            }
+        }
+    }
+
+    val isMaxSelected = selectedUris.size >= maxSelectionCount
+    val context = LocalContext.current
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Search files") },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search") },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(Icons.Default.Close, contentDescription = "Clear search")
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { focusManager.clearFocus() }),
+                    shape = RoundedCornerShape(24.dp)
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "${selectedUris.size} of $maxSelectionCount files selected",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (isMaxSelected) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                if (filteredFiles.isEmpty()) {
+                    Box(modifier = Modifier
+                        .fillMaxWidth()
+                        .height(200.dp), contentAlignment = Alignment.Center) {
+                        Text("No files found.")
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 400.dp)
+                    ) {
+                        items(filteredFiles, key = { it.uri }) { file ->
+                            val isSelected = selectedUris.contains(file.uri)
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable (
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = rememberRipple(bounded = true),
+                                        onClick = {
+                                            if (isSelected) {
+                                                selectedUris = selectedUris - file.uri
+                                            } else if (!isMaxSelected) {
+                                                selectedUris = selectedUris + file.uri
+                                            } else {
+                                                Toast.makeText(context, "Maximum of $maxSelectionCount files selected.", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    )
+                                    .padding(vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(
+                                    checked = isSelected,
+                                    onCheckedChange = null,
+                                    enabled = isSelected || !isMaxSelected
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(file.name ?: "Unnamed File", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onFilesSelected(selectedUris.toList()) }) {
+                Text("SHARE (${selectedUris.size})")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("CANCEL")
+            }
+        }
+    )
+}
 
 @Composable
 fun TermsAndConditionsScreen(onAccept: () -> Unit) {
@@ -445,5 +609,3 @@ fun TermsAndConditionsScreen(onAccept: () -> Unit) {
         }
     }
 }
-
-// *** REMOVED ALL DUPLICATE HELPER FUNCTIONS ***

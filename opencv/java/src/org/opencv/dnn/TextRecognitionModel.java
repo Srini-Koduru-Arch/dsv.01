@@ -37,7 +37,7 @@ public class TextRecognitionModel extends Model {
      * @param network Net object
      */
     public TextRecognitionModel(Net network) {
-        super(TextRecognitionModel_0(network.nativeObj));
+        super(TextRecognitionModel_0(network.getNativeObjAddr()));
     }
 
 

@@ -630,37 +630,30 @@ private suspend fun saveCleanPdf(context: Context, uris: List<Uri>, fileName: St
             bitmap.recycle()
         }
 
-        val resolver = context.contentResolver
-        val contentValues = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, if (fileName.endsWith(".pdf")) fileName else "$fileName.pdf")
-            put(MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.MediaColumns.RELATIVE_PATH, "Download/DocuScanner")
-                put(MediaStore.MediaColumns.IS_PENDING, 1)
-            }
+        // 1. Prepare base name
+        val baseName = if (fileName.endsWith(".pdf", true)) fileName.removeSuffix(".pdf") else fileName
+
+        // 2. Get App Internal Directory (Same as FilesScreen)
+        val dir = context.getExternalFilesDir(null)
+        if (dir != null && !dir.exists()) dir.mkdirs()
+
+        // 3. Ensure Unique Filename (Check existence)
+        var finalName = "$baseName.pdf"
+        var file = File(dir, finalName)
+        var counter = 1
+        while (file.exists()) {
+            finalName = "$baseName ($counter).pdf"
+            file = File(dir, finalName)
+            counter++
         }
 
-        val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
-        } else null
-
-        val outputStream = if (uri != null) resolver.openOutputStream(uri) else {
-            val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-            val appDir = File(downloadsDir, "DocuScanner").apply { if (!exists()) mkdirs() }
-            FileOutputStream(File(appDir, if (fileName.endsWith(".pdf")) fileName else "$fileName.pdf"))
+        // 4. Write File
+        FileOutputStream(file).use { out ->
+            pdfDocument.writeTo(out)
         }
 
-        if (outputStream != null) {
-            outputStream.use { pdfDocument.writeTo(it) }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && uri != null) {
-                contentValues.clear()
-                contentValues.put(MediaStore.MediaColumns.IS_PENDING, 0)
-                resolver.update(uri, contentValues, null, null)
-            }
-            withContext(Dispatchers.Main) { onComplete(true) }
-        } else {
-            withContext(Dispatchers.Main) { onComplete(false) }
-        }
+        // 5. Success
+        withContext(Dispatchers.Main) { onComplete(true) }
     } catch (e: Exception) {
         withContext(Dispatchers.Main) { onComplete(false) }
     } finally {

@@ -16,10 +16,10 @@ import org.opencv.utils.Converters;
 
 public class Core {
     // these constants are wrapped inside functions to prevent inlining
-    private static String getVersion() { return "4.10.0"; }
-    private static String getNativeLibraryName() { return "opencv_java4100"; }
+    private static String getVersion() { return "4.12.0"; }
+    private static String getNativeLibraryName() { return "opencv_java4120"; }
     private static int getVersionMajorJ() { return 4; }
-    private static int getVersionMinorJ() { return 10; }
+    private static int getVersionMinorJ() { return 12; }
     private static int getVersionRevisionJ() { return 0; }
     private static String getVersionStatusJ() { return ""; }
 
@@ -53,6 +53,13 @@ public class Core {
             REDUCE_MIN = 3,
             RNG_UNIFORM = 0,
             RNG_NORMAL = 1;
+
+
+    // C++: enum AlgorithmHint (cv.AlgorithmHint)
+    public static final int
+            ALGO_HINT_DEFAULT = 0,
+            ALGO_HINT_ACCURATE = 1,
+            ALGO_HINT_APPROX = 2;
 
 
     // C++: enum BorderTypes (cv.BorderTypes)
@@ -1846,6 +1853,17 @@ public class Core {
      *     normalize(positiveData, normalizedData_minmax, 1.0, 0.0, NORM_MINMAX);
      * </code>
      *
+     * <b>Note:</b> Due to rounding issues, min-max normalization can result in values outside provided boundaries.
+     * If exact range conformity is needed, following workarounds can be used:
+     * <ul>
+     *   <li>
+     *  use double floating point precision (dtype = CV_64F)
+     *   </li>
+     *   <li>
+     *  manually clip values ({@code cv::max(res, left_bound, res)}, {@code cv::min(res, right_bound, res)} or {@code np.clip})
+     *   </li>
+     * </ul>
+     *
      * @param src input array.
      * @param dst output array of the same size as src .
      * @param alpha norm value to normalize to or the lower range boundary in case of the range
@@ -1909,6 +1927,17 @@ public class Core {
      *     normalize(positiveData, normalizedData_minmax, 1.0, 0.0, NORM_MINMAX);
      * </code>
      *
+     * <b>Note:</b> Due to rounding issues, min-max normalization can result in values outside provided boundaries.
+     * If exact range conformity is needed, following workarounds can be used:
+     * <ul>
+     *   <li>
+     *  use double floating point precision (dtype = CV_64F)
+     *   </li>
+     *   <li>
+     *  manually clip values ({@code cv::max(res, left_bound, res)}, {@code cv::min(res, right_bound, res)} or {@code np.clip})
+     *   </li>
+     * </ul>
+     *
      * @param src input array.
      * @param dst output array of the same size as src .
      * @param alpha norm value to normalize to or the lower range boundary in case of the range
@@ -1971,6 +2000,17 @@ public class Core {
      *     normalize(positiveData, normalizedData_minmax, 1.0, 0.0, NORM_MINMAX);
      * </code>
      *
+     * <b>Note:</b> Due to rounding issues, min-max normalization can result in values outside provided boundaries.
+     * If exact range conformity is needed, following workarounds can be used:
+     * <ul>
+     *   <li>
+     *  use double floating point precision (dtype = CV_64F)
+     *   </li>
+     *   <li>
+     *  manually clip values ({@code cv::max(res, left_bound, res)}, {@code cv::min(res, right_bound, res)} or {@code np.clip})
+     *   </li>
+     * </ul>
+     *
      * @param src input array.
      * @param dst output array of the same size as src .
      * @param alpha norm value to normalize to or the lower range boundary in case of the range
@@ -2032,6 +2072,17 @@ public class Core {
      *     normalize(positiveData, normalizedData_minmax, 1.0, 0.0, NORM_MINMAX);
      * </code>
      *
+     * <b>Note:</b> Due to rounding issues, min-max normalization can result in values outside provided boundaries.
+     * If exact range conformity is needed, following workarounds can be used:
+     * <ul>
+     *   <li>
+     *  use double floating point precision (dtype = CV_64F)
+     *   </li>
+     *   <li>
+     *  manually clip values ({@code cv::max(res, left_bound, res)}, {@code cv::min(res, right_bound, res)} or {@code np.clip})
+     *   </li>
+     * </ul>
+     *
      * @param src input array.
      * @param dst output array of the same size as src .
      * @param alpha norm value to normalize to or the lower range boundary in case of the range
@@ -2092,6 +2143,17 @@ public class Core {
      *     normalize(positiveData, normalizedData_minmax, 1.0, 0.0, NORM_MINMAX);
      * </code>
      *
+     * <b>Note:</b> Due to rounding issues, min-max normalization can result in values outside provided boundaries.
+     * If exact range conformity is needed, following workarounds can be used:
+     * <ul>
+     *   <li>
+     *  use double floating point precision (dtype = CV_64F)
+     *   </li>
+     *   <li>
+     *  manually clip values ({@code cv::max(res, left_bound, res)}, {@code cv::min(res, right_bound, res)} or {@code np.clip})
+     *   </li>
+     * </ul>
+     *
      * @param src input array.
      * @param dst output array of the same size as src .
      * @param alpha norm value to normalize to or the lower range boundary in case of the range
@@ -2150,6 +2212,17 @@ public class Core {
      *     // 10.0     1.0     (shift to right border)
      *     normalize(positiveData, normalizedData_minmax, 1.0, 0.0, NORM_MINMAX);
      * </code>
+     *
+     * <b>Note:</b> Due to rounding issues, min-max normalization can result in values outside provided boundaries.
+     * If exact range conformity is needed, following workarounds can be used:
+     * <ul>
+     *   <li>
+     *  use double floating point precision (dtype = CV_64F)
+     *   </li>
+     *   <li>
+     *  manually clip values ({@code cv::max(res, left_bound, res)}, {@code cv::min(res, right_bound, res)} or {@code np.clip})
+     *   </li>
+     * </ul>
      *
      * @param src input array.
      * @param dst output array of the same size as src .
@@ -4007,8 +4080,8 @@ public class Core {
      *
      * The roots are stored in the roots array.
      * @param coeffs equation coefficients, an array of 3 or 4 elements.
-     * @param roots output array of real roots that has 1 or 3 elements.
-     * @return number of real roots. It can be 0, 1 or 2.
+     * @param roots output array of real roots that has 0, 1, 2 or 3 elements.
+     * @return number of real roots. It can be -1 (all real numbers), 0, 1, 2 or 3.
      */
     public static int solveCubic(Mat coeffs, Mat roots) {
         return solveCubic_0(coeffs.nativeObj, roots.nativeObj);
@@ -5276,7 +5349,7 @@ public class Core {
      * <b>Note:</b>
      * <ul>
      *   <li>
-     *    (Python) An example on K-means clustering can be found at
+     *    (Python) An example on k-means clustering can be found at
      *     opencv_source_code/samples/python/kmeans.py
      *   </li>
      * </ul>
@@ -5328,7 +5401,7 @@ public class Core {
      * <b>Note:</b>
      * <ul>
      *   <li>
-     *    (Python) An example on K-means clustering can be found at
+     *    (Python) An example on k-means clustering can be found at
      *     opencv_source_code/samples/python/kmeans.py
      *   </li>
      * </ul>
@@ -5697,6 +5770,15 @@ public class Core {
      */
     public static int getNumberOfCPUs() {
         return getNumberOfCPUs_0();
+    }
+
+
+    //
+    // C++:  AlgorithmHint cv::getDefaultAlgorithmHint()
+    //
+
+    public static int getDefaultAlgorithmHint() {
+        return getDefaultAlgorithmHint_0();
     }
 
 
@@ -6449,6 +6531,9 @@ public static MinMaxLocResult minMaxLoc(Mat src) {
 
     // C++:  int cv::getNumberOfCPUs()
     private static native int getNumberOfCPUs_0();
+
+    // C++:  AlgorithmHint cv::getDefaultAlgorithmHint()
+    private static native int getDefaultAlgorithmHint_0();
 
     // C++:  void cv::setUseOptimized(bool onoff)
     private static native void setUseOptimized_0(boolean onoff);

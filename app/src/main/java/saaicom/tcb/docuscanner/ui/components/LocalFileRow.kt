@@ -13,6 +13,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
+import androidx.compose.material.ripple.rememberRipple // <--- ADDED: Necessary for M3 clickable compatibility
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -43,7 +44,8 @@ fun LocalFileRow(
     onLongPress: () -> Unit,
     onDelete: () -> Unit,
     onSign: () -> Unit,
-    onRename: () -> Unit
+    onRename: () -> Unit,
+    onShare: () -> Unit // <--- ADDED: New callback for the Share button
 ) {
     val context = LocalContext.current
     var menuExpanded by remember { mutableStateOf(false) }
@@ -52,8 +54,9 @@ fun LocalFileRow(
         modifier = Modifier
             .fillMaxWidth()
             .combinedClickable(
+                // *** M2/M3 CRASH FIX: Use rememberRipple() instead of LocalIndication.current ***
                 interactionSource = remember { MutableInteractionSource() },
-                indication = LocalIndication.current,
+                indication = rememberRipple(bounded = true), // <--- FIXED LINE
                 onClick = {
                     if (selectionMode) {
                         onToggleSelection()
@@ -104,7 +107,8 @@ fun LocalFileRow(
 
         if (!selectionMode) {
             IconButton(
-                onClick = { FileActions.emailPdfFile(context, fileItem.name ?: "Document", fileItem.uri) },
+                // *** SHARE FIX: Use the dedicated onShare callback ***
+                onClick = onShare,
                 modifier = Modifier.size(36.dp)
             ) {
                 Icon(Icons.Default.Share, contentDescription = "Share")

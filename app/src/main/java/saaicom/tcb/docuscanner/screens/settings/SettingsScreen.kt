@@ -18,7 +18,7 @@ import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.CloudOff
-import androidx.compose.material.icons.filled.CloudSync
+import androidx.compose.material.icons.filled.CloudUpload // *** CHANGED: Use Upload icon ***
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -47,17 +47,18 @@ fun SettingsScreen(navController: NavController) {
     val isSyncing by DriveRepository.isSyncing.collectAsState()
     val syncStatusMessage by DriveRepository.syncStatus.collectAsState()
 
+    // 1. UPDATE PATH LOGIC
     val readablePath = remember {
-        try {
-            val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-            val appFolder = File(downloadsDir, "DocuScanner")
-            val fullPath = appFolder.absolutePath
-            val rootPath = Environment.getExternalStorageDirectory().absolutePath
-            if (fullPath.startsWith(rootPath)) {
-                fullPath.substring(rootPath.length).trimStart('/')
-            } else fullPath
-        } catch (e: Exception) {
-            "Downloads/DocuScanner"
+        // App Internal Storage Path
+        val dir = context.getExternalFilesDir(null)
+        // This usually looks like: /Android/data/saaicom.tcb.docuscanner/files
+        // Let's make it readable:
+        val root = Environment.getExternalStorageDirectory().absolutePath
+        val path = dir?.absolutePath ?: ""
+        if (path.startsWith(root)) {
+            path.substring(root.length).trimStart('/')
+        } else {
+            "App Storage (Internal)"
         }
     }
 
@@ -92,7 +93,7 @@ fun SettingsScreen(navController: NavController) {
                             "By using this app, you agree that Saaicom holds no liability for any data loss or any issues that may arise from this app's use." + "" +
                             "We do not collect any personal information from you. This app is not connected to our data servers and does not store any data. " +
                             "This app displays advertisements to support its development and maintenance. " +
-                            "If you change your acceptance, please uninstall this app."
+                            "If you change your acceptance, please uninstall this app.",
                 )
             },
             confirmButton = {
@@ -110,11 +111,11 @@ fun SettingsScreen(navController: NavController) {
             .background(MaterialTheme.colorScheme.background)
             .padding(16.dp)
     ) {
-        // 1. SCROLLABLE SECTION (Weight 1f pushes it to fill available space)
+        // 1. SCROLLABLE SECTION
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(1f) // Takes all space except for the bottom Terms row
+                .weight(1f)
                 .verticalScroll(rememberScrollState())
         ) {
             Text(
@@ -199,6 +200,7 @@ fun SettingsScreen(navController: NavController) {
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    // IMPORT BUTTON
                     OutlinedButton(
                         onClick = {
                             navController.navigate(Routes.IMPORT)
@@ -211,25 +213,27 @@ fun SettingsScreen(navController: NavController) {
                         Text("Import")
                     }
 
-                    // SYNC BUTTON
+                    // BACKUP BUTTON (Renamed from Sync)
                     Button(
-                        onClick = { DriveRepository.startSync() },
+                        onClick = { DriveRepository.startSync(context) },
                         modifier = Modifier.weight(1f),
                         enabled = !isSyncing
                     ) {
                         if (isSyncing) {
                             CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
                         } else {
-                            Icon(Icons.Default.CloudSync, contentDescription = null, modifier = Modifier.size(18.dp))
+                            // *** CHANGED: Icon to CloudUpload ***
+                            Icon(Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(18.dp))
                         }
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Sync")
+                        // *** CHANGED: Text to "Backup" ***
+                        Text("Backup")
                     }
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // Disconnect Button (Revoke Access)
+                // Disconnect Button
                 Button(
                     onClick = {
                         val client = DriveRepository.getGoogleSignInClient(context)
@@ -247,7 +251,6 @@ fun SettingsScreen(navController: NavController) {
                     Text("Disconnect / Revoke Access")
                 }
             }
-            // Spacer at bottom of scrollable area so content doesn't hit the divider immediately
             Spacer(modifier = Modifier.height(16.dp))
         }
 
@@ -262,7 +265,7 @@ fun SettingsScreen(navController: NavController) {
                 ) {
                     showTermsDialog = true
                 }
-                .padding(vertical = 16.dp), // Increased padding for better touch target at bottom
+                .padding(vertical = 16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(

@@ -69,7 +69,7 @@ public class SimpleBlobDetector extends Feature2D {
     //
 
     public static SimpleBlobDetector create(SimpleBlobDetector_Params parameters) {
-        return SimpleBlobDetector.__fromPtr__(create_0(parameters.nativeObj));
+        return SimpleBlobDetector.__fromPtr__(create_0(parameters.getNativeObjAddr()));
     }
 
     public static SimpleBlobDetector create() {
@@ -82,7 +82,7 @@ public class SimpleBlobDetector extends Feature2D {
     //
 
     public void setParams(SimpleBlobDetector_Params params) {
-        setParams_0(nativeObj, params.nativeObj);
+        setParams_0(nativeObj, params.getNativeObjAddr());
     }
 
 

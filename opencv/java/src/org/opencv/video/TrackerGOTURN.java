@@ -3,6 +3,7 @@
 //
 package org.opencv.video;
 
+import org.opencv.dnn.Net;
 import org.opencv.video.Tracker;
 import org.opencv.video.TrackerGOTURN;
 import org.opencv.video.TrackerGOTURN_Params;
@@ -41,7 +42,7 @@ public class TrackerGOTURN extends Tracker {
      * @return automatically generated
      */
     public static TrackerGOTURN create(TrackerGOTURN_Params parameters) {
-        return TrackerGOTURN.__fromPtr__(create_0(parameters.nativeObj));
+        return TrackerGOTURN.__fromPtr__(create_0(parameters.getNativeObjAddr()));
     }
 
     /**
@@ -50,6 +51,20 @@ public class TrackerGOTURN extends Tracker {
      */
     public static TrackerGOTURN create() {
         return TrackerGOTURN.__fromPtr__(create_1());
+    }
+
+
+    //
+    // C++: static Ptr_TrackerGOTURN cv::TrackerGOTURN::create(Net model)
+    //
+
+    /**
+     * Constructor
+     *     @param model pre-loaded GOTURN model
+     * @return automatically generated
+     */
+    public static TrackerGOTURN create(Net model) {
+        return TrackerGOTURN.__fromPtr__(create_2(model.getNativeObjAddr()));
     }
 
 
@@ -63,6 +78,9 @@ public class TrackerGOTURN extends Tracker {
     // C++: static Ptr_TrackerGOTURN cv::TrackerGOTURN::create(TrackerGOTURN_Params parameters = TrackerGOTURN::Params())
     private static native long create_0(long parameters_nativeObj);
     private static native long create_1();
+
+    // C++: static Ptr_TrackerGOTURN cv::TrackerGOTURN::create(Net model)
+    private static native long create_2(long model_nativeObj);
 
     // native support for java finalize()
     private static native void delete(long nativeObj);

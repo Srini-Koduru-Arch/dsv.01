@@ -59,7 +59,7 @@ public class KeypointsModel extends Model {
      * @param network Net object.
      */
     public KeypointsModel(Net network) {
-        super(KeypointsModel_2(network.nativeObj));
+        super(KeypointsModel_2(network.getNativeObjAddr()));
     }
 
 

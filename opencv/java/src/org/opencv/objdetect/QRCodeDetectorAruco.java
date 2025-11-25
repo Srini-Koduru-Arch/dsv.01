@@ -33,7 +33,7 @@ public class QRCodeDetectorAruco extends GraphicalCodeDetector {
      * @param params automatically generated
      */
     public QRCodeDetectorAruco(QRCodeDetectorAruco_Params params) {
-        super(QRCodeDetectorAruco_1(params.nativeObj));
+        super(QRCodeDetectorAruco_1(params.getNativeObjAddr()));
     }
 
 
@@ -60,7 +60,7 @@ public class QRCodeDetectorAruco extends GraphicalCodeDetector {
      * @return automatically generated
      */
     public QRCodeDetectorAruco setDetectorParameters(QRCodeDetectorAruco_Params params) {
-        return new QRCodeDetectorAruco(setDetectorParameters_0(nativeObj, params.nativeObj));
+        return new QRCodeDetectorAruco(setDetectorParameters_0(nativeObj, params.getNativeObjAddr()));
     }
 
 

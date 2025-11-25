@@ -47,7 +47,7 @@ public class Board {
      */
     public Board(List<Mat> objPoints, Dictionary dictionary, Mat ids) {
         Mat objPoints_mat = Converters.vector_Mat_to_Mat(objPoints);
-        nativeObj = Board_0(objPoints_mat.nativeObj, dictionary.nativeObj, ids.nativeObj);
+        nativeObj = Board_0(objPoints_mat.nativeObj, dictionary.getNativeObjAddr(), ids.nativeObj);
     }
 
 
