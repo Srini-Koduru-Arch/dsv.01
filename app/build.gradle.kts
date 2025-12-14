@@ -11,8 +11,8 @@ android {
         applicationId = "saaicom.tcb.docuscanner"
         minSdk = 31
         targetSdk = 35
-        versionCode = 4
-        versionName = "4.07"
+        versionCode = 9
+        versionName = "1.09"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -34,8 +34,8 @@ android {
 
     buildTypes {
         release {
-            //isMinifyEnabled = true     // Code shrinking and obfuscation (R8)
-            //isShrinkResources = true   // Resource shrinking (removes unused drawables, etc.)
+            isMinifyEnabled = true     // Code shrinking and obfuscation (R8)
+            isShrinkResources = true   // Resource shrinking (removes unused drawables, etc.)
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

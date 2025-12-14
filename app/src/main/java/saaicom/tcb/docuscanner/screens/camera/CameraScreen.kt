@@ -65,6 +65,10 @@ import java.util.concurrent.Executors
 import android.graphics.Bitmap
 import android.graphics.YuvImage
 import android.graphics.Rect
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
 import org.opencv.core.MatOfPoint
 
 import java.io.ByteArrayOutputStream
@@ -120,6 +124,9 @@ fun CameraScreen(
     // Stable reference to the latest detected corners for use in the capture lambda
     val currentDetectedCorners by rememberUpdatedState(detectedCorners)
 
+    // State to track if corners are actively being detected
+    var isDocumentDetected by remember { mutableStateOf(false) }
+
     // Request camera permission when this composable is first launched.
     LaunchedEffect(Unit) {
         requestCameraPermission()
@@ -144,7 +151,10 @@ fun CameraScreen(
                         lifecycleOwner,
                         previewView,
                         imageCapture,
-                        onCornersDetected = { corners -> detectedCorners = corners }
+                        onCornersDetected = { corners ->
+                            detectedCorners = corners
+                            isDocumentDetected = corners != null && corners.size == 4
+                        }
                     )
                 }, ContextCompat.getMainExecutor(context))
                 previewView
@@ -153,6 +163,28 @@ fun CameraScreen(
 
         // Overlay to draw the detected edges on top of the preview
         DrawEdgeOverlay(detectedCorners = detectedCorners)
+
+        // ********************************************************
+        // *** MODIFICATION START: Add detection hint overlay ***
+        // ********************************************************
+        if (!isDocumentDetected) {
+            Text(
+                text = "💡 For better detection, place the document on a **darker surface**.",
+                color = Color.White,
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 16.dp)
+                    // Add a slight background for readability over the camera feed
+                    .widthIn(max = 300.dp)
+                    .padding(8.dp)
+                    .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                    .padding(4.dp)
+            )
+        }
+        // ********************************************************
+        // *** MODIFICATION END ***
+        // ********************************************************
 
         // Capture button at the bottom center
         Button(

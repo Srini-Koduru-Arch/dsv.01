@@ -220,12 +220,12 @@ fun DocuScannerApp(requestCameraPermission: () -> Unit, hasStoragePermission: Bo
 
         if (IS_COMPACT_SCREEN) {
             // 1. SMALL DEVICE (Phone): Enforce Portrait lock for all screens except SIGN
-            val targetOrientation = if (currentRoute == Routes.SIGN) {
+            /*val targetOrientation = if (currentRoute == Routes.SIGN) {
                 ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
             } else {
                 ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-            }
-
+            }*/
+            val targetOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             if (activity.requestedOrientation != targetOrientation) {
                 activity.requestedOrientation = targetOrientation
             }
@@ -258,7 +258,7 @@ fun DocuScannerApp(requestCameraPermission: () -> Unit, hasStoragePermission: Bo
                 Box(
                     modifier = Modifier.fillMaxWidth(),
                     contentAlignment = Alignment.Center
-                ) { AdBanner(adUnitId = "ca-app-pub-3940256099942544/6300978111") }
+                ) { AdBanner(adUnitId = "ca-app-pub-3859216096123806/2000190374") }
             }
         },
         bottomBar = {

@@ -428,7 +428,7 @@ fun ActionButton(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
             .clickable(
-                interactionSource = remember { MutableInteractionSource() },
+                //interactionSource = remember { MutableInteractionSource() },
                 //indication = rememberRipple(bounded = true),
                 onClick = onClick)
             .padding(4.dp)
@@ -528,7 +528,7 @@ fun MultipleFileSelectionDialog(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable (
-                                        interactionSource = remember { MutableInteractionSource() },
+                                        //interactionSource = remember { MutableInteractionSource() },
                                         //indication = rememberRipple(bounded = true),
                                         onClick = {
                                             if (isSelected) {

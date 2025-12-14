@@ -622,7 +622,7 @@ private fun SignatureCanvas(
                         },
                         enabled = hasDrawing
                     ) {
-                        Icon(Icons.Default.Check, contentDescription = "Save")
+                        Icon(Icons.Default.SaveAs, contentDescription = "Save")
                     }
                 }
             )

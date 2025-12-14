@@ -7,22 +7,8 @@
     <!-- Permissions for Camera access -->
     <uses-permission android:name="android.permission.CAMERA"/>
 
-    <!-- uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" / -->
-
-    <!-- Permissions for Reading Storage (READ_EXTERNAL_STORAGE for API 32 and below) -->
-    <!-- This is for reading general files on older Android versions. -->
-    <!--<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        android:maxSdkVersion="29" />-->
-    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
-
-    <!-- Permissions for Reading Media (Android 13 / API 33 and above) -->
-    <!-- These are granular permissions for accessing media files. -->
-    <!-- READ_MEDIA_IMAGES is crucial for listing scanned documents (which are often images/PDFs). -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
-    <!-- Add READ_MEDIA_VIDEO and READ_MEDIA_AUDIO if your app will also list/access those types of files -->
-    <!-- <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" /> -->
-    <!-- <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" /> -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>
 
     <application
         android:allowBackup="true"
@@ -36,10 +22,10 @@
         android:enableOnBackInvokedCallback="true"
         tools:targetApi="35">
         <!-- Sample AdMob app ID: ca-app-pub-3940256099942544~3347511713 -->
-        <!-- Production AdMob app ID: ca-app-pub-3859216096123806/2479545443 -->
+        <!-- Production AdMob app ID: ca-app-pub-3859216096123806~5119695816 -->
         <meta-data
             android:name="com.google.android.gms.ads.APPLICATION_ID"
-            android:value="ca-app-pub-3940256099942544~3347511713"/>
+            android:value="ca-app-pub-3859216096123806~5119695816"/>
         <activity
             android:name=".MainActivity"
             android:exported="true"

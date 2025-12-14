@@ -25,6 +25,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -37,11 +38,15 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.OpenInFull
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.SaveAs
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -55,7 +60,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -208,19 +212,22 @@ fun PdfSignScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Sign Document", fontWeight = FontWeight.Bold) },
+                title = { Text("Sign Document") },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
                     }
                 },
                 actions = {
-                    // One big save button
+                    if(selectedSignatureId != null) {
+                        IconButton(onClick = { selectedSignatureId = null }) {
+                            Icon(Icons.Default.Check, "Done")
+                        }
+                    }
                     IconButton(onClick = { showSaveDialog = true }, enabled = !isLoading && !isSaving) {
-                        if (isSaving) CircularProgressIndicator(modifier = Modifier.size(24.dp)) else Icon(Icons.Default.Check, "Save", modifier = Modifier.size(32.dp))
+                        if (isSaving) CircularProgressIndicator(modifier = Modifier.size(24.dp)) else Icon(Icons.Default.SaveAs, "Save")
                     }
                 },
-                // FIX 1: Remove Top Padding (Status Bar inset)
                 windowInsets = WindowInsets(0.dp)
             )
         },
@@ -237,7 +244,6 @@ fun PdfSignScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                // FIX 2: ONLY apply TOP padding. Ignore bottom/other padding to remove wasted space.
                 .padding(top = padding.calculateTopPadding())
                 .background(Color.LightGray)
                 .onSizeChanged { containerSize = it }
@@ -300,8 +306,7 @@ fun PdfSignScreen(
                             translationX = offsetX
                         },
                     verticalArrangement = Arrangement.spacedBy(8.dp),
-                    // FIX 3: Remove internal content padding
-                    contentPadding = PaddingValues(0.dp),
+                    contentPadding = PaddingValues(vertical = 16.dp),
                     userScrollEnabled = true
                 ) {
                     items(count = pageCount) { pageIndex ->
@@ -328,57 +333,66 @@ fun PdfSignScreen(
 
         if (showSignatureSheet) {
             ModalBottomSheet(onDismissRequest = { showSignatureSheet = false }, sheetState = sheetState) {
-                SignatureSelectionSheet(savedSignatures) { file ->
-                    scope.launch {
-                        val bitmap = BitmapFactory.decodeFile(file.absolutePath)?.asImageBitmap()
-                        if (bitmap != null) {
-                            val layoutInfo = listState.layoutInfo
-                            val viewportCenter = layoutInfo.viewportEndOffset / 2
-                            val centerItem = layoutInfo.visibleItemsInfo.minByOrNull { item ->
-                                val itemCenter = item.offset + (item.size / 2)
-                                abs(itemCenter - viewportCenter)
-                            }
-                            val targetPage = centerItem?.index ?: 0
-
-                            var pdfPageW = 595f
-                            var pdfPageH = 842f
-                            withContext(Dispatchers.IO) {
-                                pdfMutex.withLock {
-                                    try {
-                                        val page = pdfRenderer?.openPage(targetPage)
-                                        if (page != null) {
-                                            pdfPageW = page.width.toFloat()
-                                            pdfPageH = page.height.toFloat()
-                                            page.close()
-                                        }
-                                    } catch (e: Exception) { }
+                SignatureSelectionSheet(
+                    signatures = savedSignatures,
+                    onSelect = { file ->
+                        scope.launch {
+                            val bitmap = BitmapFactory.decodeFile(file.absolutePath)?.asImageBitmap()
+                            if (bitmap != null) {
+                                // Center Placement Logic
+                                val layoutInfo = listState.layoutInfo
+                                val viewportCenter = layoutInfo.viewportEndOffset / 2
+                                val centerItem = layoutInfo.visibleItemsInfo.minByOrNull { item ->
+                                    val itemCenter = item.offset + (item.size / 2)
+                                    abs(itemCenter - viewportCenter)
                                 }
+                                val targetPage = centerItem?.index ?: 0
+
+                                var pdfPageW = 595f
+                                var pdfPageH = 842f
+                                withContext(Dispatchers.IO) {
+                                    pdfMutex.withLock {
+                                        try {
+                                            val page = pdfRenderer?.openPage(targetPage)
+                                            if (page != null) {
+                                                pdfPageW = page.width.toFloat()
+                                                pdfPageH = page.height.toFloat()
+                                                page.close()
+                                            }
+                                        } catch (e: Exception) { }
+                                    }
+                                }
+
+                                val screenPageW = centerItem?.size?.toFloat() ?: 1080f
+                                val scaleFactor = screenPageW / pdfPageW
+                                val visualCenterYOnPage = (layoutInfo.viewportSize.height / 2) - (centerItem?.offset ?: 0)
+                                val pdfCenterY = visualCenterYOnPage / scaleFactor
+
+                                val aspectRatio = bitmap.height.toFloat() / bitmap.width.toFloat()
+                                val width = 200f
+                                val height = width * aspectRatio
+
+                                val startX = (pdfPageW - width) / 2
+                                val startY = pdfCenterY - (height / 2)
+
+                                val newSig = PlacedSignature(
+                                    bitmap = bitmap,
+                                    pageIndex = targetPage,
+                                    x = startX, y = startY,
+                                    width = width, height = height
+                                )
+                                allSignatures.add(newSig)
+                                selectedSignatureId = newSig.id
+                                showSignatureSheet = false
                             }
-
-                            val screenPageW = centerItem?.size?.toFloat() ?: 1080f
-                            val scaleFactor = screenPageW / pdfPageW
-                            val visualCenterYOnPage = (layoutInfo.viewportSize.height / 2) - (centerItem?.offset ?: 0)
-                            val pdfCenterY = visualCenterYOnPage / scaleFactor
-
-                            val aspectRatio = bitmap.height.toFloat() / bitmap.width.toFloat()
-                            val width = 200f
-                            val height = width * aspectRatio
-
-                            val startX = (pdfPageW - width) / 2
-                            val startY = pdfCenterY - (height / 2)
-
-                            val newSig = PlacedSignature(
-                                bitmap = bitmap,
-                                pageIndex = targetPage,
-                                x = startX, y = startY,
-                                width = width, height = height
-                            )
-                            allSignatures.add(newSig)
-                            selectedSignatureId = newSig.id
-                            showSignatureSheet = false
                         }
+                    },
+                    // *** NEW: Handle "Create New Signature" Click ***
+                    onCreateNew = {
+                        showSignatureSheet = false
+                        navController.navigate(Routes.SIGN)
                     }
-                }
+                )
             }
         }
     }
@@ -471,7 +485,6 @@ fun SignatureView(
     val screenW = signature.width * scaleFactor
     val screenH = signature.height * scaleFactor
 
-    // State Management
     val currentSignature by rememberUpdatedState(signature)
     val currentOnUpdate by rememberUpdatedState(onUpdate)
     val currentOnSelect by rememberUpdatedState(onSelect)
@@ -485,41 +498,39 @@ fun SignatureView(
             )
             .graphicsLayer { rotationZ = signature.rotation }
             .zIndex(if(isSelected) 10f else 1f)
+            // Gestures for Move (Center) and Pinch (Center)
             .pointerInput(Unit) {
-                detectTapGestures(onTap = { currentOnSelect() })
-            }
-            .pointerInput(Unit) {
-                detectTransformGestures { _, pan, zoom, rotation ->
+                detectTransformGestures { _, pan, zoom, _ ->
+                    // Note: We ignore 'rotation' here because we use the handle for that
                     currentOnSelect()
-
                     val sig = currentSignature
+
+                    // 1. Pan
                     val dx = pan.x / scaleFactor
                     val dy = pan.y / scaleFactor
+
+                    // 2. Zoom
                     val newW = (sig.width * zoom).coerceAtLeast(20f)
                     val newH = (sig.height * zoom).coerceAtLeast(20f)
-
                     val wChange = newW - sig.width
                     val hChange = newH - sig.height
+
                     var rawX = sig.x + dx - (wChange / 2)
                     var rawY = sig.y + dy - (hChange / 2)
 
                     val maxX = pdfPageSize.width - newW
                     val maxY = pdfPageSize.height - newH
-
                     val safeX = rawX.coerceIn(0f, maxX.coerceAtLeast(0f))
                     val safeY = rawY.coerceIn(0f, maxY.coerceAtLeast(0f))
 
-                    currentOnUpdate(sig.copy(
-                        x = safeX,
-                        y = safeY,
-                        width = newW,
-                        height = newH,
-                        rotation = sig.rotation + rotation
-                    ))
+                    currentOnUpdate(sig.copy(x = safeX, y = safeY, width = newW, height = newH))
                 }
             }
+            .pointerInput(Unit) {
+                detectTapGestures(onTap = { currentOnSelect() })
+            }
     ) {
-        // 1. Image
+        // 1. The Image
         Image(
             bitmap = signature.bitmap,
             contentDescription = "Signature",
@@ -528,23 +539,96 @@ fun SignatureView(
         )
 
         if (isSelected) {
-            // 2. Border (Sibling behind button)
+            // 2. Blue Border (Behind icons)
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .border(2.dp, Color.Blue)
             )
 
-            // 3. Close Button (Sibling on top, zIndex 2f)
+            // 3. RESIZE HANDLE (Top Left) - 1-Finger Drag to Resize
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .offset(x = (-12).dp, y = (-12).dp)
+                    .size(24.dp)
+                    .shadow(2.dp, CircleShape)
+                    .background(MaterialTheme.colorScheme.primary, CircleShape)
+                    .clip(CircleShape)
+                    .zIndex(2f)
+                    .pointerInput(Unit) {
+                        detectDragGestures { _, dragAmount ->
+                            currentOnSelect()
+                            val sig = currentSignature
+
+                            // Logic: Dragging Top-Left away from center (Up/Left) increases size.
+                            // To keep aspect ratio, we average the X and Y drag.
+                            // Inverted logic: Dragging left (-x) should grow width (+w).
+                            val delta = -(dragAmount.x + dragAmount.y) / 2 / scaleFactor
+                            val growth = delta * 2 // Grow both sides to stay centered
+
+                            val newW = (sig.width + growth).coerceAtLeast(20f)
+                            val newH = (sig.height + growth * (sig.height/sig.width)).coerceAtLeast(20f)
+
+                            val wChange = newW - sig.width
+                            val hChange = newH - sig.height
+
+                            // Adjust X/Y to keep center fixed (Center Zoom)
+                            val newX = sig.x - (wChange / 2)
+                            val newY = sig.y - (hChange / 2)
+
+                            currentOnUpdate(sig.copy(width = newW, height = newH, x = newX, y = newY))
+                        }
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.OpenInFull,
+                    contentDescription = "Resize",
+                    tint = Color.White,
+                    modifier = Modifier.size(14.dp).rotate(90f)
+                )
+            }
+
+            // 4. ROTATE HANDLE (Bottom Center) - 1-Finger Drag to Rotate
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .offset(y = 12.dp)
+                    .size(24.dp)
+                    .shadow(2.dp, CircleShape)
+                    .background(MaterialTheme.colorScheme.secondary, CircleShape)
+                    .clip(CircleShape)
+                    .zIndex(2f)
+                    .pointerInput(Unit) {
+                        detectDragGestures { _, dragAmount ->
+                            currentOnSelect()
+                            val sig = currentSignature
+                            // Dragging X rotates
+                            val rotationDelta = dragAmount.x / 2f
+                            currentOnUpdate(sig.copy(rotation = sig.rotation - rotationDelta))
+                        }
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = "Rotate",
+                    tint = Color.White,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+
+            // 5. CLOSE BUTTON (Top Right) - Tap to Delete
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .offset(x = 12.dp, y = (-12).dp)
-                    .zIndex(2f) // Fix: Explicit high Z-Index
                     .size(24.dp)
-                    .shadow(4.dp, CircleShape)
+                    .shadow(2.dp, CircleShape)
                     .background(MaterialTheme.colorScheme.error, CircleShape)
                     .clip(CircleShape)
+                    .zIndex(2f)
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
@@ -563,12 +647,29 @@ fun SignatureView(
 }
 
 @Composable
-fun SignatureSelectionSheet(signatures: List<File>, onSelect: (File) -> Unit) {
+fun SignatureSelectionSheet(
+    signatures: List<File>,
+    onSelect: (File) -> Unit,
+    onCreateNew: () -> Unit // New parameter for creating signatures
+) {
     Column(Modifier.padding(16.dp).fillMaxWidth()) {
         Text("Select Signature", style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.height(16.dp))
+
         if (signatures.isEmpty()) {
-            Text("No saved signatures. Go to 'Sign' tab to create one.")
+            // --- EMPTY STATE ---
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text("No saved signatures found.", style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.height(16.dp))
+                Button(onClick = onCreateNew) {
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Create New Signature")
+                }
+            }
         } else {
             LazyColumn {
                 items(signatures.size) { i ->
@@ -591,6 +692,17 @@ fun SignatureSelectionSheet(signatures: List<File>, onSelect: (File) -> Unit) {
                         Text(file.name)
                     }
                 }
+                // Option to add new at bottom of list too
+                item {
+                    OutlinedButton(
+                        onClick = onCreateNew,
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Create New")
+                    }
+                }
             }
         }
         Spacer(Modifier.height(24.dp))
@@ -609,6 +721,7 @@ fun SavePdfDialog(onDismiss: () -> Unit, onSave: (String) -> Unit) {
     )
 }
 
+// --- SAVE FUNCTION (Updated to App Specific Storage) ---
 private suspend fun saveCleanPdf(context: Context, uris: List<Uri>, fileName: String, onComplete: (Boolean) -> Unit) = withContext(Dispatchers.IO) {
     val pdfDocument = PdfDocument()
     try {
@@ -630,31 +743,24 @@ private suspend fun saveCleanPdf(context: Context, uris: List<Uri>, fileName: St
             bitmap.recycle()
         }
 
-        // 1. Prepare base name
-        val baseName = if (fileName.endsWith(".pdf", true)) fileName.removeSuffix(".pdf") else fileName
-
-        // 2. Get App Internal Directory (Same as FilesScreen)
-        val dir = context.getExternalFilesDir(null)
-        if (dir != null && !dir.exists()) dir.mkdirs()
-
-        // 3. Ensure Unique Filename (Check existence)
-        var finalName = "$baseName.pdf"
-        var file = File(dir, finalName)
-        var counter = 1
-        while (file.exists()) {
-            finalName = "$baseName ($counter).pdf"
-            file = File(dir, finalName)
-            counter++
+        // --- SAVE TO APP SPECIFIC FILES (file_paths.xml 'app_files') ---
+        // "app_files" path="." maps to getExternalFilesDir(null)
+        val baseDir = context.getExternalFilesDir(null)
+        if (baseDir != null && !baseDir.exists()) {
+            baseDir.mkdirs()
         }
 
-        // 4. Write File
-        FileOutputStream(file).use { out ->
-            pdfDocument.writeTo(out)
-        }
+        val finalFile = File(baseDir, if (fileName.endsWith(".pdf")) fileName else "$fileName.pdf")
+        val outputStream = FileOutputStream(finalFile)
 
-        // 5. Success
-        withContext(Dispatchers.Main) { onComplete(true) }
+        if (outputStream != null) {
+            outputStream.use { pdfDocument.writeTo(it) }
+            withContext(Dispatchers.Main) { onComplete(true) }
+        } else {
+            withContext(Dispatchers.Main) { onComplete(false) }
+        }
     } catch (e: Exception) {
+        Log.e("SavePdf", "Error", e)
         withContext(Dispatchers.Main) { onComplete(false) }
     } finally {
         pdfDocument.close()
