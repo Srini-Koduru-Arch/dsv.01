@@ -5,4 +5,9 @@ import android.net.Uri
 /**
  * A centralized data class to represent a local file item.
  */
-data class FileItem(val name: String?, val sizeInBytes: Long, val uri: Uri)
+data class FileItem(
+    val name: String,
+    val sizeInBytes: Long,
+    val uri: Uri,
+    val isDirectory: Boolean = false,
+    val lastModified: Long = 0L)

@@ -1,17 +1,22 @@
 package saaicom.tcb.docuscanner
 
 import android.graphics.Bitmap
+import android.util.Log
 import org.opencv.android.Utils
 import org.opencv.core.*
 import org.opencv.imgproc.Imgproc
+import org.opencv.photo.Photo
 import kotlin.math.max
 import kotlin.math.pow
 import kotlin.math.sqrt
-import android.util.Log
 
 class Scanner {
 
-    // A simple data class to hold the results of our processing steps
+    // Define the available filters
+    enum class FilterType {
+        Original, Magic, BW, Grayscale, Photo, Denoise
+    }
+
     data class ScannedData(
         val original: Bitmap,
         val corners: MatOfPoint2f? = null,
@@ -19,8 +24,11 @@ class Scanner {
     )
 
     fun detectEdges(bitmap: Bitmap): ScannedData {
+        // ... (Keep your existing detectEdges logic exactly as is) ...
+        // For brevity, I am not repeating the full detectEdges code here,
+        // please ensure you keep the implementation from your uploaded file.
+
         // --- 1. Bitmap to Mat ---
-        // Ensure the bitmap is mutable and in ARGB_8888
         val mutableBitmap = if (bitmap.isMutable && bitmap.config == Bitmap.Config.ARGB_8888) {
             bitmap
         } else {
@@ -29,25 +37,20 @@ class Scanner {
         val imageMat = Mat()
         Utils.bitmapToMat(mutableBitmap, imageMat)
 
-        // --- 2. Image Pre-processing ---
         val grayMat = Mat()
         Imgproc.cvtColor(imageMat, grayMat, Imgproc.COLOR_RGBA2GRAY)
-
         val blurredMat = Mat()
         Imgproc.GaussianBlur(grayMat, blurredMat, Size(5.0, 5.0), 0.0)
-
         val cannyMat = Mat()
         Imgproc.Canny(blurredMat, cannyMat, 75.0, 200.0)
 
-        // --- 3. Find Contours ---
         val contours = ArrayList<MatOfPoint>()
         val hierarchy = Mat()
         Imgproc.findContours(cannyMat, contours, hierarchy, Imgproc.RETR_LIST, Imgproc.CHAIN_APPROX_SIMPLE)
 
-        // --- 4. Find the Best Candidate (the document) ---
         var bestCandidate: MatOfPoint2f? = null
         var maxArea = 0.0
-        val minArea = imageMat.size().area() * 0.1 // Require at least 10% of image area
+        val minArea = imageMat.size().area() * 0.1
 
         for (contour in contours) {
             val contourArea = Imgproc.contourArea(contour)
@@ -68,12 +71,11 @@ class Scanner {
             contour.release()
         }
 
-        // Clean up intermediate matrices
         grayMat.release()
         blurredMat.release()
         cannyMat.release()
         hierarchy.release()
-        imageMat.release() // No longer need imageMat, only the original bitmap
+        imageMat.release()
 
         return ScannedData(
             original = mutableBitmap,
@@ -81,11 +83,10 @@ class Scanner {
         )
     }
 
+    // ... (Keep sortPoints exactly as is) ...
     private fun sortPoints(points: MatOfPoint2f): MatOfPoint2f {
         val pts = points.toArray()
         if (pts.isEmpty()) return MatOfPoint2f()
-
-        // 1. Find the center of the quadrilateral
         var centerX = 0.0
         var centerY = 0.0
         for (point in pts) {
@@ -93,16 +94,11 @@ class Scanner {
             centerY += point.y
         }
         val center = Point(centerX / 4, centerY / 4)
-
-        // 2. Sort by angle relative to the center
         val sortedPoints = pts.sortedWith { a, b ->
             val angleA = kotlin.math.atan2(a.y - center.y, a.x - center.x)
             val angleB = kotlin.math.atan2(b.y - center.y, b.x - center.x)
             angleA.compareTo(angleB)
         }
-
-        // 3. Find the top-left corner
-        // The top-left corner will have the smallest sum of x and y
         var tlIndex = 0
         var minSum = Double.MAX_VALUE
         for (i in sortedPoints.indices) {
@@ -112,28 +108,24 @@ class Scanner {
                 tlIndex = i
             }
         }
-
-        // 4. Re-order the list to start with top-left
         val finalPoints = arrayOfNulls<Point>(4)
         for (i in 0..3) {
             finalPoints[i] = sortedPoints[(tlIndex + i) % 4]
         }
-
         return MatOfPoint2f(*finalPoints)
     }
 
+    // Updated to just perform the crop. We apply filters separately.
     fun applyPerspectiveTransform(data: ScannedData): ScannedData {
         val originalBitmap = data.original
-        val corners = data.corners ?: return data // No corners, return original data
+        val corners = data.corners ?: return data
         val sortedCorners = sortPoints(corners)
-        // --- 1. Define Source Points ---
         val srcPoints = sortedCorners.toArray()
         if (srcPoints.size < 4) {
-            sortedCorners.release() // Clean up
+            sortedCorners.release()
             return data
         }
 
-        // --- 2. Define Destination Dimensions based on corners ---
         val (tl, tr, br, bl) = srcPoints
         val topWidth = sqrt((tr.x - tl.x).pow(2) + (tr.y - tl.y).pow(2))
         val bottomWidth = sqrt((br.x - bl.x).pow(2) + (br.y - bl.y).pow(2))
@@ -143,105 +135,143 @@ class Scanner {
         val maxWidth = max(topWidth, bottomWidth)
         val maxHeight = max(leftHeight, rightHeight)
 
-        // =======================================================
-        // ===            THE CRASH FIX (Part 1)               ===
-        // =======================================================
-        // If the corners form an invalid shape (e.g., a line or point),
-        // the width or height will be 0, which crashes OpenCV.
         if (maxWidth < 1 || maxHeight < 1) {
-            Log.e("Scanner", "Invalid crop dimensions: ${maxWidth}x${maxHeight}. Returning original.")
             sortedCorners.release()
-            // Return the *original* data, not a crash
             return data.copy(scanned = originalBitmap)
         }
-        // =======================================================
 
-        // --- 3. Define Destination Points for the cropped image ---
         val dstPoints = MatOfPoint2f(
-            Point(0.0, 0.0),                     // Top-left
-            Point(maxWidth - 1, 0.0),            // Top-right
-            Point(maxWidth - 1, maxHeight - 1),  // Bottom-right
-            Point(0.0, maxHeight - 1)            // Bottom-left
+            Point(0.0, 0.0),
+            Point(maxWidth - 1, 0.0),
+            Point(maxWidth - 1, maxHeight - 1),
+            Point(0.0, maxHeight - 1)
         )
 
-        // --- 4. Create destination Mat for the cropped image ---
-        // This line is now safe because we checked maxWidth/maxHeight
         val croppedMat = Mat(Size(maxWidth, maxHeight), CvType.CV_8UC4)
-
-        // --- 5. Warp Document ---
         val transform = Imgproc.getPerspectiveTransform(sortedCorners, dstPoints)
-
-        // =======================================================
-        // ===            THE CRASH FIX (Part 2)               ===
-        // =======================================================
-        // Add a try-catch as a final safety net for native OpenCV errors
         val originalMat = Mat()
         val scannedBitmap: Bitmap
+
         try {
             Utils.bitmapToMat(originalBitmap, originalMat)
             Imgproc.warpPerspective(originalMat, croppedMat, transform, croppedMat.size(), Imgproc.INTER_LINEAR)
 
-            // --- 6. Enhance Document ---
-            val enhancedMat = enhanceDocument(croppedMat) // Enhance the cropped image
+            // NOTE: We do NOT apply enhanceDocument here anymore.
+            // We return the raw cropped image so the user can choose the filter.
 
-            // --- 7. Convert back to Bitmap ---
-            scannedBitmap = Bitmap.createBitmap(enhancedMat.cols(), enhancedMat.rows(), Bitmap.Config.ARGB_8888)
-            Utils.matToBitmap(enhancedMat, scannedBitmap)
-
-            enhancedMat.release() // Release the enhanced mat
+            scannedBitmap = Bitmap.createBitmap(croppedMat.cols(), croppedMat.rows(), Bitmap.Config.ARGB_8888)
+            Utils.matToBitmap(croppedMat, scannedBitmap)
 
         } catch (e: Exception) {
-            Log.e("Scanner", "OpenCV warpPerspective or enhancement failed", e)
-            // Clean up
+            Log.e("Scanner", "Warp failed", e)
+            return data.copy(scanned = originalBitmap)
+        } finally {
             corners.release()
             dstPoints.release()
             transform.release()
             originalMat.release()
             croppedMat.release()
-            // Return original bitmap on failure
-            return data.copy(scanned = originalBitmap)
         }
-        // =======================================================
-
-        // Clean up
-        corners.release()
-        dstPoints.release()
-        transform.release()
-        originalMat.release()
-        croppedMat.release()
 
         return data.copy(scanned = scannedBitmap)
     }
 
+    /**
+     * Applies a specific filter to a bitmap and returns a new bitmap.
+     */
+    fun applyFilter(bitmap: Bitmap, filterType: FilterType): Bitmap {
+        val srcMat = Mat()
+        Utils.bitmapToMat(bitmap, srcMat)
+
+        // Convert to RGB for processing if needed (Bitmap is RGBA)
+        val rgbMat = Mat()
+        Imgproc.cvtColor(srcMat, rgbMat, Imgproc.COLOR_RGBA2RGB)
+
+        val processedMat = Mat()
+
+        when (filterType) {
+            FilterType.Original -> {
+                // Just copy
+                rgbMat.copyTo(processedMat)
+            }
+            FilterType.Grayscale -> {
+                Imgproc.cvtColor(rgbMat, processedMat, Imgproc.COLOR_RGB2GRAY)
+                // Convert back to RGB so it displays correctly on Bitmap
+                Imgproc.cvtColor(processedMat, processedMat, Imgproc.COLOR_GRAY2RGB)
+            }
+            FilterType.BW -> {
+                // Grayscale -> Adaptive Threshold
+                val gray = Mat()
+                Imgproc.cvtColor(rgbMat, gray, Imgproc.COLOR_RGB2GRAY)
+                // Adaptive Threshold for "Document Scan" look
+                Imgproc.adaptiveThreshold(
+                    gray, processedMat, 255.0,
+                    Imgproc.ADAPTIVE_THRESH_GAUSSIAN_C,
+                    Imgproc.THRESH_BINARY, 11, 2.0
+                )
+                gray.release()
+                // Convert back to RGB
+                val temp = Mat()
+                processedMat.copyTo(temp)
+                Imgproc.cvtColor(temp, processedMat, Imgproc.COLOR_GRAY2RGB)
+                temp.release()
+            }
+            FilterType.Magic -> {
+                // Your previous "enhanceDocument" logic (CLAHE)
+                enhanceDocument(rgbMat).copyTo(processedMat)
+            }
+            FilterType.Photo -> {
+                // Mild enhancement: Slight saturation/contrast boost
+                // Convert to HSV -> Increase S -> Back to RGB
+                val hsv = Mat()
+                Imgproc.cvtColor(rgbMat, hsv, Imgproc.COLOR_RGB2HSV)
+                val channels = ArrayList<Mat>()
+                Core.split(hsv, channels)
+                // Scale saturation by 1.2
+                channels[1].convertTo(channels[1], -1, 1.2, 0.0)
+                Core.merge(channels, hsv)
+                Imgproc.cvtColor(hsv, processedMat, Imgproc.COLOR_HSV2RGB)
+                hsv.release()
+                channels.forEach { it.release() }
+            }
+            FilterType.Denoise -> {
+                // Bilateral Filter keeps edges sharp but removes noise
+                // (Faster than Non-Local Means)
+                Imgproc.bilateralFilter(rgbMat, processedMat, 9, 75.0, 75.0)
+            }
+        }
+
+        // Convert back to RGBA for Bitmap
+        val finalMat = Mat()
+        Imgproc.cvtColor(processedMat, finalMat, Imgproc.COLOR_RGB2RGBA)
+
+        val resultBitmap = Bitmap.createBitmap(finalMat.cols(), finalMat.rows(), Bitmap.Config.ARGB_8888)
+        Utils.matToBitmap(finalMat, resultBitmap)
+
+        // Cleanup
+        srcMat.release()
+        rgbMat.release()
+        processedMat.release()
+        finalMat.release()
+
+        return resultBitmap
+    }
+
     private fun enhanceDocument(colorMat: Mat): Mat {
-        // --- 1. Convert to LAB color space ---
-        // LAB separates Brightness (L) from Color (A, B)
         val labMat = Mat()
         Imgproc.cvtColor(colorMat, labMat, Imgproc.COLOR_RGB2Lab)
-
-        // --- 2. Extract the L (Lightness) channel ---
         val channels = ArrayList<Mat>(3)
         Core.split(labMat, channels)
         val lChannel = channels[0]
-
-        // --- 3. Apply adaptive threshold to the L channel ---
-        // This enhances contrast and removes shadows without affecting color
         val clahe = Imgproc.createCLAHE()
         clahe.clipLimit = 2.0
         clahe.apply(lChannel, lChannel)
-
-        // --- 4. Merge the enhanced L channel back with the original A and B channels ---
         Core.merge(channels, labMat)
-
-        // --- 5. Convert back to RGB ---
         val enhancedMat = Mat()
         Imgproc.cvtColor(labMat, enhancedMat, Imgproc.COLOR_Lab2RGB)
-
-        // Clean up
         labMat.release()
         channels.forEach { it.release() }
         lChannel.release()
-
         return enhancedMat
     }
 }
